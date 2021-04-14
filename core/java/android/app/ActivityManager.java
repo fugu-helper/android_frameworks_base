@@ -2447,6 +2447,30 @@ public class ActivityManager {
     }
 
     /**
+     * @hide
+     * Finish Activity on first external display
+     */
+    public void finishActivityOnExternalDisplay() {
+        try {
+            getService().finishActivityOnExternalDisplay();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * Finish Activity on second external display
+     */
+    public void finishActivityOnSecondExternalDisplay() {
+        try {
+            getService().finishActivityOnSecondExternalDisplay();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Ask that the task associated with a given task ID be moved to the
      * front of the stack, so it is now visible to the user.
      *

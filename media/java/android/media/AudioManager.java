@@ -46,6 +46,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.ServiceManager;
 import android.os.UserHandle;
+import android.os.SystemProperties;
 import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.Log;
@@ -70,6 +71,7 @@ public class AudioManager {
     private final boolean mUseVolumeKeySounds;
     private final boolean mUseFixedVolume;
     private static final String TAG = "AudioManager";
+    private static final String DYN_AUDIO_SYS_PROP_DUAL = "persist.sys.daudioout.dual";
     private static final boolean DEBUG = false;
     private static final AudioPortEventHandler sAudioPortEventHandler = new AudioPortEventHandler();
 
@@ -2135,13 +2137,17 @@ public class AudioManager {
                         switch (msg.what) {
                             case MSSG_FOCUS_CHANGE: {
                                 final FocusRequestInfo fri = findFocusRequestInfo((String)msg.obj);
-                                if (fri != null)  {
-                                    final OnAudioFocusChangeListener listener =
-                                            fri.mRequest.getOnAudioFocusChangeListener();
-                                    if (listener != null) {
-                                        Log.d(TAG, "dispatching onAudioFocusChange("
-                                                + msg.arg1 + ") to " + msg.obj);
-                                        listener.onAudioFocusChange(msg.arg1);
+                                if (fri != null) {
+                                    // Check Dual Audio Routing Settings and Disable
+                                    String dynAudio = SystemProperties.get(DYN_AUDIO_SYS_PROP_DUAL);
+                                    if (!dynAudio.equals("enable")) {
+                                        final OnAudioFocusChangeListener listener =
+                                                fri.mRequest.getOnAudioFocusChangeListener();
+                                        if (listener != null) {
+                                            Log.d(TAG, "dispatching onAudioFocusChange("
+                                                    + msg.arg1 + ") to " + msg.obj);
+                                            listener.onAudioFocusChange(msg.arg1);
+                                        }
                                     }
                                 }
                             } break;

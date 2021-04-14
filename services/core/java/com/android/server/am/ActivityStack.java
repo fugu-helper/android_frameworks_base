@@ -126,6 +126,7 @@ import com.android.internal.app.IVoiceInteractor;
 import com.android.internal.os.BatteryStatsImpl;
 import com.android.server.Watchdog;
 import com.android.server.am.ActivityManagerService.ItemMatcher;
+import com.android.server.am.ActivityStackSupervisor.ActivityDisplay;
 import com.android.server.wm.StackWindowController;
 import com.android.server.wm.StackWindowListener;
 import com.android.server.wm.WindowManagerService;
@@ -252,6 +253,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
     private static final int FIT_WITHIN_BOUNDS_DIVIDER = 3;
 
     final ActivityManagerService mService;
+    final ActivityDisplay mActivityDisplay;
     private final WindowManagerService mWindowManager;
     T mWindowContainerController;
     private final RecentTasks mRecentTasks;
@@ -452,6 +454,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
             ActivityStackSupervisor supervisor, RecentTasks recentTasks, boolean onTop) {
         mStackSupervisor = supervisor;
         mService = supervisor.mService;
+        mActivityDisplay = display;
         mHandler = new ActivityStackHandler(mService.mHandler.getLooper());
         mWindowManager = mService.mWindowManager;
         mStackId = stackId;
@@ -662,6 +665,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
         for (int taskNdx = mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
             ActivityRecord r = mTaskHistory.get(taskNdx).topRunningActivityLocked();
             if (r != null && (!focusableOnly || r.isFocusable())) {
+                Slog.d(TAG, "ActivityRecord is :" +r +"taskId =" +taskNdx);
                 return r;
             }
         }
@@ -861,6 +865,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
         mStacks.remove(this);
         mStacks.add(findStackInsertIndex(ON_TOP), this);
         mStackSupervisor.setFocusStackUnchecked(reason, this);
+
         if (task != null) {
             insertTaskAtTop(task, null);
             return;
@@ -2310,7 +2315,10 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
 
         if (!hasRunningActivity) {
             // There are no activities left in the stack, let's look somewhere else.
+            Slog.d(TAG, "Coming to resumeTopActivityInnerLocked, hasRunningActivity false");
             return resumeTopActivityInNextFocusableStack(prev, options, "noMoreActivities");
+        } else {
+            Slog.d(TAG, "Coming to resumeTopActivityInnerLocked, hasRunningActivity true");
         }
 
         next.delayedResume = false;
@@ -2338,7 +2346,8 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
                 // This task is going away but it was supposed to return to the home stack.
                 // Now the task above it has to return to the home task instead.
                 final int taskNdx = mTaskHistory.indexOf(prevTask) + 1;
-                mTaskHistory.get(taskNdx).setTaskToReturnTo(HOME_ACTIVITY_TYPE);
+                if (isOnHomeDisplay())
+                    mTaskHistory.get(taskNdx).setTaskToReturnTo(HOME_ACTIVITY_TYPE);
             } else if (!isOnHomeDisplay()) {
                 return false;
             } else if (!isHomeStack()){
@@ -2731,23 +2740,21 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
     }
 
     private boolean resumeTopActivityInNextFocusableStack(ActivityRecord prev,
-            ActivityOptions options, String reason) {
+                            ActivityOptions options, String reason) {
         if ((!mFullscreen || !isOnHomeDisplay()) && adjustFocusToNextFocusableStackLocked(reason)) {
             // Try to move focus to the next visible stack with a running activity if this
             // stack is not covering the entire screen or is on a secondary display (with no home
             // stack).
             return mStackSupervisor.resumeFocusedStackTopActivityLocked(
-                    mStackSupervisor.getFocusedStack(), prev, null);
+                            mStackSupervisor.getFocusedStack(), prev, null);
         }
-
         // Let's just start up the Launcher...
         ActivityOptions.abort(options);
         if (DEBUG_STATES) Slog.d(TAG_STATES,
-                "resumeTopActivityInNextFocusableStack: " + reason + ", go home");
+            "resumeTopActivityInNextFocusableStack: " + reason + ", go home");
         if (DEBUG_STACK) mStackSupervisor.validateTopActivitiesLocked();
-        // Only resume home if on home display
-        return isOnHomeDisplay() &&
-                mStackSupervisor.resumeHomeStackTask(prev, reason);
+            // Only resume home if on home display
+        return isOnHomeDisplay() && mStackSupervisor.resumeHomeStackTask(prev, reason);
     }
 
     private TaskRecord getNextTask(TaskRecord targetTask) {
@@ -3403,7 +3410,17 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
 
         final ActivityRecord next = topRunningActivityLocked();
         final String myReason = reason + " adjustFocus";
+        if (next == null && !isOnHomeDisplay()) //  siva added change for clone mode issue
+        {
+            Slog.d(TAG, "No more Activities on External Display Condition");
+            if (mActivityDisplay.mDisplayId == Display.EXTERNAL_DISPLAY) {
+                mService.mActivityStarter.removeExternalNav();
+            }
 
+            if (mActivityDisplay.mDisplayId == Display.SECOND_EXTERNAL_DISPLAY) {
+                mService.mActivityStarter.removeSecondExternalNav();
+            }
+        }
         if (next != r) {
             if (next != null && StackId.keepFocusInStackIfPossible(mStackId) && isFocusable()) {
                 // For freeform, docked, and pinned stacks we always keep the focus within the
@@ -4702,7 +4719,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
             if (task.isOverHomeStack()) {
                 break;
             }
-            if (taskNdx == 1) {
+            if ((taskNdx == 1) && isOnHomeDisplay()) {
                 // Set the last task before tr to go to home.
                 task.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
             }
@@ -5159,7 +5176,7 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
 
         final int taskNdx = mTaskHistory.indexOf(task);
         final int topTaskNdx = mTaskHistory.size() - 1;
-        if (task.isOverHomeStack() && taskNdx < topTaskNdx) {
+        if (task.isOverHomeStack() && taskNdx < topTaskNdx && isOnHomeDisplay()) {
             final TaskRecord nextTask = mTaskHistory.get(taskNdx + 1);
             if (!nextTask.isOverHomeStack() && !nextTask.isOverAssistantStack()) {
                 nextTask.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
@@ -5178,16 +5195,15 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
                 } catch (RemoteException e) {
                 }
             }
-            if (task.autoRemoveFromRecents() || isVoiceSession) {
-                // Task creator asked to remove this when done, or this task was a voice
-                // interaction, so it should not remain on the recent tasks list.
-                mRecentTasks.remove(task);
-                task.removedFromRecents();
+
+            if (task.autoRemoveFromRecents() || isVoiceSession || !isOnHomeDisplay()) {
+                   // Task creator asked to remove this when done, or this task was a voice
+                   // interaction, so it should not remain on the recent tasks list.
+                   mRecentTasks.remove(task);
+                   task.removedFromRecents();
             }
-
-            task.removeWindowContainer();
+        task.removeWindowContainer();
         }
-
         if (mTaskHistory.isEmpty()) {
             if (DEBUG_STACK) Slog.i(TAG_STACK, "removeTask: removing stack=" + this);
             // We only need to adjust focused stack if this stack is in focus and we are not in the
@@ -5199,6 +5215,19 @@ class ActivityStack<T extends StackWindowController> extends ConfigurationContai
                     mStackSupervisor.moveHomeStackToFront(myReason);
                 }
             }
+
+            // If we dont have Any Task on second / second external display,
+            // remove navigation bar and move to clone mode.
+            if (!isOnHomeDisplay() ) {
+                if (mActivityDisplay.mDisplayId == Display.EXTERNAL_DISPLAY) {
+                    if (DEBUG_STACK) Slog.i(TAG_STACK, "second display removing External Navigation");
+                    mService.mActivityStarter.removeExternalNav();
+                } else if (mActivityDisplay.mDisplayId == Display.SECOND_EXTERNAL_DISPLAY) {
+                    if (DEBUG_STACK) Slog.i(TAG_STACK, "third display removing External Navigation");
+                    mService.mActivityStarter.removeSecondExternalNav();
+                }
+            }
+
             if (mStacks != null) {
                 mStacks.remove(this);
                 mStacks.add(0, this);

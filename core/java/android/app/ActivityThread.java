@@ -3329,10 +3329,37 @@ public final class ActivityThread {
 
         try {
             if (localLOGV) Slog.v(TAG, "Creating service " + data.info.name);
-
-            ContextImpl context = ContextImpl.createAppContext(this, packageInfo);
-            context.setOuterContext(service);
-
+            Context context = null;
+            ContextImpl appContext = ContextImpl.createAppContext(this, packageInfo);
+            appContext.setOuterContext(service);
+            // fix me
+            if (data.info.name.contains("BackKeyService")) {
+                DisplayManagerGlobal dm = DisplayManagerGlobal.getInstance();
+                for (int displayId : dm.getDisplayIds()) {
+                    if (displayId == Display.EXTERNAL_DISPLAY) {
+                        Display display = dm.getRealDisplay(displayId);
+                        context = appContext.createDisplayContext(display);
+                        Slog.v(TAG, "Creating context for BackKey");
+                        break;
+                    } else {
+                          context = appContext;
+                    }
+                }
+            } else if (data.info.name.contains("SecondaryBkService")) {
+                DisplayManagerGlobal dm = DisplayManagerGlobal.getInstance();
+                for (int displayId : dm.getDisplayIds()) {
+                    if (displayId == Display.SECOND_EXTERNAL_DISPLAY) {
+                        Display display = dm.getRealDisplay(displayId);
+                        context = appContext.createDisplayContext(display);
+                        Slog.v(TAG, "Creating context for SecondaryBkService");
+                        break;
+                    } else {
+                          context = appContext;
+                    }
+                }
+            } else {
+                context = appContext;
+            }
             Application app = packageInfo.makeApplication(false, mInstrumentation);
             service.attach(context, this, data.info.name, data.token, app,
                     ActivityManager.getService());

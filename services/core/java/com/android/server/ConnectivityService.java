@@ -74,6 +74,9 @@ import android.net.metrics.DefaultNetworkEvent;
 import android.net.metrics.IpConnectivityLog;
 import android.net.metrics.NetworkEvent;
 import android.net.util.MultinetworkPolicyTracker;
+/* Dual Ethernet Changes Start */
+import android.net.StringNetworkSpecifier;
+/* Dual Ethernet Changes End */
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -702,6 +705,14 @@ public class ConnectivityService extends IConnectivityManager.Stub
         mNetworkRequests.put(mDefaultRequest, defaultNRI);
         mNetworkRequestInfoLogs.log("REGISTER " + defaultNRI);
 
+        /* Dual Ethernet Changes start */
+        mDualEthernetRequest = createRequestForDualEthernet(NetworkCapabilities.TRANSPORT_ETHERNET, NetworkRequest.Type.REQUEST);
+        NetworkRequestInfo dualEthernetNRI = new NetworkRequestInfo(null, mDualEthernetRequest, new Binder());
+        mNetworkRequests.put(mDefaultRequest, defaultNRI);
+        mNetworkRequests.put(mDualEthernetRequest, dualEthernetNRI);
+        mNetworkRequestInfoLogs.log("REGISTER " + dualEthernetNRI);
+        /* Dual Ethernet Changes end */
+
         mDefaultMobileDataRequest = createInternetRequestForTransport(
                 NetworkCapabilities.TRANSPORT_CELLULAR, NetworkRequest.Type.BACKGROUND_REQUEST);
 
@@ -874,6 +885,20 @@ public class ConnectivityService extends IConnectivityManager.Stub
         }
         return new NetworkRequest(netCap, TYPE_NONE, nextNetworkRequestId(), type);
     }
+
+    /* Dual Ethernet Changes start */
+    private NetworkRequest createRequestForDualEthernet(
+            int transportType, NetworkRequest.Type type) {
+        NetworkCapabilities netCap = new NetworkCapabilities();
+        netCap.addCapability(NET_CAPABILITY_INTERNET);
+        netCap.addCapability(NET_CAPABILITY_NOT_RESTRICTED);
+        if (transportType > -1) {
+            netCap.addTransportType(transportType);
+        }
+        netCap.setNetworkSpecifier( new StringNetworkSpecifier("pluggedinethernet"));
+        return new NetworkRequest(netCap, TYPE_NONE, nextNetworkRequestId(), type);
+    }
+    /* Dual Ethernet Changes end */
 
     // Used only for testing.
     // TODO: Delete this and either:
@@ -1339,7 +1364,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
     public boolean isActiveNetworkMetered() {
         enforceAccessPermission();
 
-        final NetworkCapabilities caps = getNetworkCapabilities(getActiveNetwork());
+        final int uid = Binder.getCallingUid();
+        final NetworkCapabilities caps = getUnfilteredActiveNetworkState(uid).networkCapabilities;
         if (caps != null) {
             return !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
         } else {
@@ -4331,6 +4357,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
     // Note: if mDefaultRequest is changed, NetworkMonitor needs to be updated.
     private final NetworkRequest mDefaultRequest;
+    /* Dual Ethernet changes Start */
+    private final NetworkRequest mDualEthernetRequest;
+    /* Dual Ethernet changes End */
 
     // Request used to optionally keep mobile data active even when higher
     // priority networks like Wi-Fi are active.

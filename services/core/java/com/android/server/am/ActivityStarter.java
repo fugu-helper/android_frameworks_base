@@ -94,6 +94,8 @@ import android.app.IApplicationThread;
 import android.app.PendingIntent;
 import android.app.ProfilerInfo;
 import android.app.WaitResult;
+import android.content.Context;
+import android.content.ComponentName;
 import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentSender;
@@ -105,6 +107,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.UserInfo;
 import android.content.res.Configuration;
 import android.graphics.Rect;
+import android.hardware.display.DisplayManager;
 import android.hardware.power.V1_0.PowerHint;
 import android.os.Binder;
 import android.os.Bundle;
@@ -117,6 +120,7 @@ import android.service.voice.IVoiceInteractionSession;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.Slog;
+import android.view.Display;
 
 import com.android.internal.app.HeavyWeightSwitcherActivity;
 import com.android.internal.app.IVoiceInteractor;
@@ -142,6 +146,13 @@ class ActivityStarter {
     private static final String TAG_CONFIGURATION = TAG + POSTFIX_CONFIGURATION;
     private static final String TAG_USER_LEAVING = TAG + POSTFIX_USER_LEAVING;
 
+    private static final String COMP_NAME_EXT_NAV = "com.intel.external.nav";
+    private static final String COMP_NAME_EXT_NAV_BACKKEY_SERVICE =
+                                "com.intel.external.nav.BackKeyService";
+    private static final String COMP_NAME_SEC_EXT_NAV = "com.intel.secondaryexternal.nav";
+    private static final String COMP_NAME_SEC_EXT_NAV_BACKKEY_SERVICE =
+                                "com.intel.secondaryexternal.nav.SecondaryBkService";
+
     private final ActivityManagerService mService;
     private final ActivityStackSupervisor mSupervisor;
     private ActivityStartInterceptor mInterceptor;
@@ -161,6 +172,10 @@ class ActivityStarter {
     private boolean mLaunchTaskBehind;
     private int mLaunchFlags;
 
+    private String mAppDisplayOnExternalDisplay;
+    private String mAppDisplayOnSecondExternalDisplay;
+    private boolean mExternalNavStart;
+    private boolean mSecondaryExternalNavStart;
     private Rect mLaunchBounds;
 
     private ActivityRecord mNotTop;
@@ -315,6 +330,53 @@ class ActivityStarter {
                         + intent.toString());
                 err = ActivityManager.START_PERMISSION_DENIED;
             }
+        }
+
+        int externalDisplayId = getExternalDisplayId();
+        if(callerApp != null) {
+            if(callerApp.info.packageName != null)
+                Slog.v(TAG, "callerApp.info.packageName is: " + callerApp.info.packageName);
+        }
+
+        if(mAppDisplayOnExternalDisplay != null) {
+            Slog.v(TAG, "mAppDisplayOnExternalDisplay is: " + mAppDisplayOnExternalDisplay);
+        }
+
+        int secondExternalDisplayId = getSecondExternalDisplayId();
+        if(callerApp != null) {
+            if(callerApp.info.packageName != null)
+                Slog.v(TAG, "callerApp.info.packageName is: " + callerApp.info.packageName);
+        }
+        if(mAppDisplayOnSecondExternalDisplay != null) {
+            Slog.v(TAG, "mAppDisplayOnSecondExternalDisplay is: " + mAppDisplayOnSecondExternalDisplay);
+        }
+
+        if(aInfo != null) {
+            if(aInfo.packageName != null){
+                Slog.v(TAG, "aInfo.packageName is: " + aInfo.packageName);
+                Slog.v(TAG, "aInfo.displayId is: " + aInfo.displayId);
+            }
+        }
+        if (externalDisplayId != -1 && callerApp != null && !callerApp.info.packageName.equals("android")
+                && (mAppDisplayOnExternalDisplay != null && !mAppDisplayOnExternalDisplay.isEmpty()
+                && (aInfo != null) && ((mAppDisplayOnExternalDisplay.contains(callerApp.info.packageName))
+                || (!aInfo.packageName.equals("android") && mAppDisplayOnExternalDisplay.contains(aInfo.packageName))))) {
+            aInfo.displayId = externalDisplayId;
+            if (!ismExternalNavStart()) {
+                startExternalNav();
+            }
+        } else if (secondExternalDisplayId != -1 && callerApp != null && !callerApp.info.packageName.equals("android")
+                && (mAppDisplayOnSecondExternalDisplay != null && !mAppDisplayOnSecondExternalDisplay.isEmpty()
+                && (aInfo != null) && ((mAppDisplayOnSecondExternalDisplay.contains(callerApp.info.packageName))
+                || (!aInfo.packageName.equals("android") && mAppDisplayOnSecondExternalDisplay.contains(aInfo.packageName))))) {
+            Slog.d(TAG, "startActivityLocked displayid for 3rd coming inside loop");
+            aInfo.displayId = secondExternalDisplayId;
+
+            if (!mSecondaryExternalNavStart) {
+                startSecondExternalNav();
+            }
+        } else if(aInfo != null) {
+            aInfo.displayId = Display.DEFAULT_DISPLAY;
         }
 
         final int userId = aInfo != null ? UserHandle.getUserId(aInfo.applicationInfo.uid) : 0;
@@ -2166,6 +2228,36 @@ class ActivityStarter {
         if (r.isHomeActivity()) {
             return mSupervisor.mHomeStack;
         }
+
+        boolean isShowOnExternal = (r.info.displayId != Display.DEFAULT_DISPLAY);
+        int displayId = -1;
+        ActivityStack stack1 = null;
+        Slog.w(TAG, "coming to getLaunchStack of AS, isShowOnExternal is::"+isShowOnExternal);
+        if (isShowOnExternal) {
+            Slog.w(TAG, "coming to getLaunchStack of AS inside if");
+            if(r.info.displayId == Display.EXTERNAL_DISPLAY) {
+                displayId = getExternalDisplayId();
+                stack1 = mSupervisor.getExternalDisplayStack();
+            } else if(r.info.displayId == Display.SECOND_EXTERNAL_DISPLAY) {
+                displayId = mSupervisor.getSecondExternalDisplayId();
+                stack1 = mSupervisor.getSecondExternalDisplayStack();
+            }
+            if (stack1 != null) {
+                if (DEBUG_FOCUS || DEBUG_STACK) Slog.w(TAG,
+                     "computeStackFocus: find external display stack=" + stack1);
+                return stack1;
+            }
+           // Time to create the stack on external display.
+            if (displayId > Display.DEFAULT_DISPLAY) {
+                stack1 = mSupervisor.createStackOnDisplay(mSupervisor.getNextStackId(), displayId, true);
+            }
+            if (stack1 != null) {
+                if (DEBUG_FOCUS || DEBUG_STACK) Slog.w(TAG,
+                    "computeStackFocus: Create new stack on external display stack=" + stack1);
+                return stack1;
+            }
+        }
+
         if (r.isRecentsActivity()) {
             return mSupervisor.getStack(RECENTS_STACK_ID, CREATE_IF_NEEDED, ON_TOP);
         }
@@ -2283,6 +2375,102 @@ class ActivityStarter {
             }
         }
         return newBounds;
+    }
+
+    public boolean removeExternalNav() {
+        stopExternalNav();
+        return true;
+    }
+
+    public boolean removeSecondExternalNav() {
+        stopSecondExternalNav();
+        return true;
+    }
+
+    public boolean ismExternalNavStart() {
+        return mExternalNavStart;
+    }
+
+    public void setmExternalNavStart(boolean mExternalNavStart) {
+        this.mExternalNavStart = mExternalNavStart;
+    }
+
+    public boolean ismSecondExternalNavStart() {
+        return mSecondaryExternalNavStart;
+    }
+
+    public void setmSecondExternalNavStart(boolean mSecondaryExternalNavStart) {
+        this.mSecondaryExternalNavStart = mSecondaryExternalNavStart;
+    }
+
+    private void startExternalNav() {
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(COMP_NAME_EXT_NAV,
+                                              COMP_NAME_EXT_NAV_BACKKEY_SERVICE));
+        mService.mContext.startServiceAsUser(intent,UserHandle.OWNER);
+        setmExternalNavStart(true);
+    }
+
+    private void stopExternalNav() {
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(COMP_NAME_EXT_NAV,
+                                              COMP_NAME_EXT_NAV_BACKKEY_SERVICE));
+        mService.mContext.stopServiceAsUser(intent,UserHandle.OWNER);
+        setmExternalNavStart(false);
+    }
+
+    private void startSecondExternalNav() {
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(COMP_NAME_SEC_EXT_NAV,
+                                              COMP_NAME_SEC_EXT_NAV_BACKKEY_SERVICE));
+        mService.mContext.startServiceAsUser(intent,UserHandle.OWNER);
+        mSecondaryExternalNavStart = true;
+    }
+
+    private void stopSecondExternalNav() {
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(COMP_NAME_SEC_EXT_NAV,
+                                              COMP_NAME_SEC_EXT_NAV_BACKKEY_SERVICE));
+        mService.mContext.stopServiceAsUser(intent,UserHandle.OWNER);
+        mSecondaryExternalNavStart = false;
+    }
+
+    public void setAppNameDisplayOnExternal(String name){
+        mAppDisplayOnExternalDisplay = name;
+        Slog.w(TAG, "setAppNameDisplayOnExternal is:" + mAppDisplayOnExternalDisplay);
+    }
+
+    public void setAppNameDisplayOnSecondExternal(String name){
+        mAppDisplayOnSecondExternalDisplay = name;
+        Slog.w(TAG, "setAppNameDisplayOnSecondExternal is:" + mAppDisplayOnSecondExternalDisplay);
+    }
+
+    int getExternalDisplayId() {
+        DisplayManager displayManager = (DisplayManager)mService.mContext.getSystemService(Context.DISPLAY_SERVICE);
+        Display[] displays = displayManager.getDisplays();
+        int externalDisplayId = -1;
+        for (Display display : displays) {
+            if (display.getDisplayId() ==  Display.EXTERNAL_DISPLAY) {
+                externalDisplayId = display.getDisplayId();
+                break;
+            }
+        }
+        Slog.v(TAG, "externalDisplayId is: " + externalDisplayId);
+        return externalDisplayId;
+    }
+
+    int getSecondExternalDisplayId() {
+        DisplayManager displayManager = (DisplayManager)mService.mContext.getSystemService(Context.DISPLAY_SERVICE);
+        Display[] displays = displayManager.getDisplays();
+        int secondExternalDisplayId = -1;
+        for (Display display : displays) {
+            if (display.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+                secondExternalDisplayId = display.getDisplayId();
+                break;
+            }
+        }
+        Slog.v(TAG, "secondExternalDisplayId is: " + secondExternalDisplayId);
+        return secondExternalDisplayId;
     }
 
     void setWindowManager(WindowManagerService wm) {

@@ -37,7 +37,8 @@ public abstract class InputManagerInternal {
      * by the input system.  The input system must copy this information to retain it.
      */
     public abstract void setDisplayViewports(DisplayViewport defaultViewport,
-            DisplayViewport externalTouchViewport, List<DisplayViewport> virtualTouchViewports);
+            DisplayViewport externalTouchViewport, DisplayViewport secondExternalTouchViewport,
+            List<DisplayViewport> virtualTouchViewports);
 
     /**
      * Called by the power manager to tell the input manager whether it should start

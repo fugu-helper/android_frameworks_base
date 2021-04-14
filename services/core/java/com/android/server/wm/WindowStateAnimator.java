@@ -238,7 +238,10 @@ class WindowStateAnimator {
 
     private final Rect mTmpSize = new Rect();
 
-    WindowStateAnimator(final WindowState win) {
+    final int mLayerStack;
+
+    // WindowStateAnimator(final WindowState win) {
+    public WindowStateAnimator(final WindowState win) {
         final WindowManagerService service = win.mService;
 
         mService = service;
@@ -262,6 +265,7 @@ class WindowStateAnimator {
         mAttrType = win.mAttrs.type;
         mIsWallpaper = win.mIsWallpaper;
         mWallpaperControllerLocked = mService.mRoot.mWallpaperController;
+        mLayerStack = win.getDisplayContent().getDisplay().getLayerStack();
     }
 
     public void setAnimation(Animation anim, long startTime, int stackClip) {
@@ -1766,7 +1770,7 @@ class WindowStateAnimator {
      *
      * @return Returns true if the surface was successfully shown.
      */
-    private boolean showSurfaceRobustlyLocked() {
+    public boolean showSurfaceRobustlyLocked() {
         final Task task = mWin.getTask();
         if (task != null && StackId.windowsAreScaleable(task.mStack.mStackId)) {
             mSurfaceController.forceScaleableInTransaction(true);

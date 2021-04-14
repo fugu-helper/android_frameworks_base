@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2010 The Android Open Source Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apaches License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -61,6 +61,10 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
 
     // Current window with input focus for keys and other non-touch events.  May be null.
     private WindowState mInputFocus;
+
+    private WindowState mInputFocusOnExternal;
+
+    private WindowState mInputFocusOnSecondaryExternal;
 
     // When true, prevents input dispatch from proceeding until set to false again.
     private boolean mInputDispatchFrozen;
@@ -207,6 +211,12 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
                 Slog.i(TAG_WM, "WINDOW DIED " + windowState);
                 windowState.removeIfPossible();
             }
+        }
+    }
+
+    public void updateFocusDisplay(int displayId) {
+        synchronized (mService.mWindowMap) {
+            mService.updateFocusDisplay(displayId); // Need to check
         }
     }
 
@@ -508,6 +518,49 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
         }
     }
 
+    public void setInputFocusOnExternalLw(WindowState newWindow, boolean updateInputWindows) {
+        if (DEBUG_FOCUS_LIGHT || DEBUG_INPUT) {
+            Slog.d(TAG_WM, "Secondary External Input focus has changed to " + newWindow);
+        }
+
+        if (newWindow != mInputFocusOnExternal) {
+            if (newWindow != null && newWindow.canReceiveKeys()) {
+                // Displaying a window implicitly causes dispatching to be unpaused.
+                // This is to protect against bugs if someone pauses dispatching but
+                // forgets to resume.
+                newWindow.mToken.paused = false;
+            }
+
+            mInputFocusOnExternal = newWindow;
+            setUpdateInputWindowsNeededLw();
+
+            if (updateInputWindows) {
+                updateInputWindowsLw(false /*force*/);
+            }
+        }
+    }
+
+    public void setInputFocusOnSecondExternalLw(WindowState newWindow, boolean updateInputWindows) {
+        Slog.d("InputMonitor", "setInputFocusOnSecondaryExternalLw: ");
+        if (DEBUG_FOCUS_LIGHT || DEBUG_INPUT) {
+            Slog.d(TAG_WM, "Secondary External Input focus has changed to " + newWindow);
+        }
+
+        if (newWindow != mInputFocusOnSecondaryExternal) {
+            if (newWindow != null && newWindow.canReceiveKeys()) {
+                // Displaying a window implicitly causes dispatching to be unpaused.
+                // This is to protect against bugs if someone pauses dispatching but
+                // forgets to resume.
+                newWindow.mToken.paused = false;
+            }
+            mInputFocusOnSecondaryExternal = newWindow;
+            setUpdateInputWindowsNeededLw();
+            if (updateInputWindows) {
+                updateInputWindowsLw(false /*force*/);
+            }
+        }
+    }
+
     public void setFocusedAppLw(AppWindowToken newApp) {
         // Focused app has changed.
         if (newApp == null) {
@@ -518,6 +571,31 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             handle.dispatchingTimeoutNanos = newApp.mInputDispatchingTimeoutNanos;
 
             mService.mInputManager.setFocusedApplication(handle);
+        }
+    }
+
+    public void setFocusedAppOnExternalLw(AppWindowToken newApp) {
+        // External focused app has changed.
+        if (newApp == null) {
+            mService.mInputManager.setFocusedApplicationOnExternal(null);
+        } else {
+            final InputApplicationHandle handle = newApp.mInputApplicationHandle;
+            handle.name = newApp.toString();
+            handle.dispatchingTimeoutNanos = newApp.mInputDispatchingTimeoutNanos;
+
+            mService.mInputManager.setFocusedApplicationOnExternal(handle);
+        }
+    }
+
+    public void setFocusedAppOnSecondExternalLw(AppWindowToken newApp) {
+        // Secondary External focused app has changed.
+        if (newApp == null) {
+            mService.mInputManager.setFocusedApplicationOnSecondExternal(null);
+        } else {
+            final InputApplicationHandle handle = newApp.mInputApplicationHandle;
+            handle.name = newApp.toString();
+            handle.dispatchingTimeoutNanos = newApp.mInputDispatchingTimeoutNanos;
+            mService.mInputManager.setFocusedApplicationOnSecondExternal(handle);
         }
     }
 
@@ -647,7 +725,7 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             final int flags = w.mAttrs.flags;
             final int privateFlags = w.mAttrs.privateFlags;
             final int type = w.mAttrs.type;
-            final boolean hasFocus = w == mInputFocus;
+            final boolean hasFocus = (w == mInputFocus || w == mInputFocusOnExternal);
             final boolean isVisible = w.isVisibleLw();
 
             if (w.getStackId() == PINNED_STACK_ID) {

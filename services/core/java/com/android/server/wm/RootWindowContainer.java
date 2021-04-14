@@ -165,9 +165,33 @@ class RootWindowContainer extends WindowContainer<DisplayContent> {
     }
 
     WindowState computeFocusedWindow() {
+        final DisplayContent displayContent = mService.getDefaultDisplayContentLocked();
+        WindowState win = displayContent.findFocusedWindow();
+        if (win != null) {
+             return win;
+        }
+        return null;
+    }
+
+    public WindowState computeFocusedWindowOnExternalLocked() {
         for (int i = mChildren.size() - 1; i >= 0; i--) {
-            final DisplayContent dc = mChildren.get(i);
-            final WindowState win = dc.findFocusedWindow();
+            final DisplayContent displayContent = mChildren.get(i);
+            if(displayContent.isDefaultDisplay)
+                break;
+            final WindowState win = displayContent.findFocusedWindow();
+            if (win != null) {
+                return win;
+            }
+        }
+        return null;
+    }
+
+    public WindowState computeFocusedWindowOnSecondExternalLocked() {
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            final DisplayContent displayContent = mChildren.get(i);
+            if(displayContent.isDefaultDisplay)
+                break;
+            final WindowState win = displayContent.findFocusedWindow();
             if (win != null) {
                 return win;
             }
@@ -948,8 +972,11 @@ class RootWindowContainer extends WindowContainer<DisplayContent> {
             if ((privateflags & PRIVATE_FLAG_SUSTAINED_PERFORMANCE_MODE) != 0) {
                 mSustainedPerformanceModeCurrent = true;
             }
+            // If there are some windowstate in secondary displays,We should set mDisplayHasContent
+            if (w.getDisplayId() != Display.DEFAULT_DISPLAY && w.mToken != null) {
+                displayHasContent = true;
+            }
         }
-
         return displayHasContent;
     }
 

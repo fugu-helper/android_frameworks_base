@@ -27,6 +27,8 @@ import android.util.Slog;
 import android.media.AudioManager;
 import android.util.Log;
 import android.view.InputDevice;
+import android.os.SystemProperties;
+
 
 import com.android.internal.R;
 import com.android.server.input.InputManagerService;
@@ -68,9 +70,13 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private static final String NAME_USB_AUDIO = "usb_audio";
     private static final String NAME_HDMI_AUDIO = "hdmi_audio";
     private static final String NAME_HDMI = "hdmi";
+    private static final String NAME_DRM = "card0";
+    private static final String NAME_DRM_HDMI = "card0-HDMI-A-1";
+    private static final String NAME_DRM_DP = "card0-DP-1";
 
     private static final int MSG_NEW_DEVICE_STATE = 1;
     private static final int MSG_SYSTEM_READY = 2;
+    private static final String HDMI_STATUS = "persist.sys.hdmi.connected";
 
     private final Object mLock = new Object();
 
@@ -138,7 +144,11 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                     break;
 
                 case SW_LINEOUT_INSERT_BIT:
-                    headset = BIT_LINEOUT;
+                    headset = BIT_HEADSET;
+                    break;
+
+                case SW_LINEOUT_INSERT_BIT | SW_MICROPHONE_INSERT_BIT:
+                    headset = BIT_HEADSET;
                     break;
 
                 case SW_HEADPHONE_INSERT_BIT | SW_MICROPHONE_INSERT_BIT:
@@ -321,29 +331,32 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
         void init() {
             synchronized (mLock) {
                 if (LOG) Slog.v(TAG, "init()");
-                char[] buffer = new char[1024];
 
                 for (int i = 0; i < mUEventInfo.size(); ++i) {
                     UEventInfo uei = mUEventInfo.get(i);
-                    try {
-                        int curState;
-                        FileReader file = new FileReader(uei.getSwitchStatePath());
-                        int len = file.read(buffer, 0, 1024);
-                        file.close();
-                        curState = Integer.parseInt((new String(buffer, 0, len)).trim());
-
+                    int curState = 0;
+                    if (uei.getDevName() != null) {
+                        if (uei.getDevName().equals("NAME_HDMI_AUDIO") || uei.getDevName().equals("NAME_HDMI")) {
+                            curState = Integer.valueOf(readStringFromFile(uei.getSwitchStatePath()).trim());
+                        } else {
+                            String chkString1 = readStringFromFile (uei.getDrmHdmiPath());
+                            String chkString2 = readStringFromFile (uei.getDrmDpPath());
+                            if (chkString1 != null && chkString2 != null) {
+                                if (chkString1.trim().equals ("connected") || chkString2.trim().equals ("connected")) {
+                                    curState = 1;
+                                }
+                            }
+                            if (chkString1.trim().equals ("connected")) {
+                                SystemProperties.set(HDMI_STATUS,"1");
+                            } else {
+                                SystemProperties.set(HDMI_STATUS,"0");
+                            }
+                        }
                         if (curState > 0) {
                             updateStateLocked(uei.getDevPath(), uei.getDevName(), curState);
                         }
-                    } catch (FileNotFoundException e) {
-                        Slog.w(TAG, uei.getSwitchStatePath() +
-                                " not found while attempting to determine initial switch state");
-                    } catch (Exception e) {
-                        Slog.e(TAG, "" , e);
                     }
                 }
-            }
-
             // At any given time accessories could be inserted
             // one on the board, one on the dock and one on HDMI:
             // observe three UEVENTs
@@ -351,6 +364,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 UEventInfo uei = mUEventInfo.get(i);
                 startObserving("DEVPATH="+uei.getDevPath());
             }
+          }
         }
 
         private List<UEventInfo> makeObservedUEventList() {
@@ -391,10 +405,13 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 if (uei.checkSwitchExists()) {
                     retVal.add(uei);
                 } else {
-                    Slog.w(TAG, "This kernel does not have HDMI audio support");
+                    Slog.w(TAG, "This kernel does not have HDMI Switch State Support");
+                    uei = new UEventInfo(NAME_DRM, BIT_HDMI_AUDIO, 0, 0);
+                    if (uei.checkPathExists(uei.getDrmPath())) {
+                        retVal.add(uei);
+                    }
                 }
             }
-
             return retVal;
         }
 
@@ -404,8 +421,8 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
             try {
                 String devPath = event.get("DEVPATH");
-                String name = event.get("SWITCH_NAME");
-                int state = Integer.parseInt(event.get("SWITCH_STATE"));
+                String name = event.get("DEVNAME");
+                int state = Integer.parseInt(event.get("HOTPLUG"));
                 synchronized (mLock) {
                     updateStateLocked(devPath, name, state);
                 }
@@ -417,11 +434,33 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
         private void updateStateLocked(String devPath, String name, int state) {
             for (int i = 0; i < mUEventInfo.size(); ++i) {
                 UEventInfo uei = mUEventInfo.get(i);
+                String chkString1 = readStringFromFile (uei.getDrmHdmiPath());
+                if (chkString1.trim().equals ("connected")) {
+                    SystemProperties.set(HDMI_STATUS,"1");
+                } else {
+                    SystemProperties.set(HDMI_STATUS,"0");
+                }
                 if (devPath.equals(uei.getDevPath())) {
                     updateLocked(name, uei.computeNewHeadsetState(mHeadsetState, state));
                     return;
                 }
             }
+        }
+
+        public String readStringFromFile (String path) {
+            char[] buffer = new char[1024];
+            int len = 0;
+            try {
+                FileReader file = new FileReader(path);
+                len = file.read(buffer, 0, 1024);
+                file.close();
+            } catch (FileNotFoundException e) {
+                  Slog.w(TAG, path +
+                             " not found while attempting to determine initial switch state");
+            } catch (Exception e) {
+                  Slog.e(TAG, "" , e);
+            }
+            return new String (buffer, 0, len);
         }
 
         private final class UEventInfo {
@@ -440,15 +479,44 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             public String getDevName() { return mDevName; }
 
             public String getDevPath() {
-                return String.format(Locale.US, "/devices/virtual/switch/%s", mDevName);
+                if (checkPathExists(String.format(Locale.US, "/devices/virtual/switch/%s", mDevName))) {
+                    return String.format(Locale.US, "/devices/virtual/switch/%s", mDevName);
+                } else if (checkPathExists(String.format(Locale.US, "/sys/devices/pci0000:00/0000:00:02.0/drm/%s", mDevName))) {
+                    return String.format(Locale.US, "/devices/pci0000:00/0000:00:02.0/drm/%s", mDevName);
+                } else {
+                    return "";
+                }
             }
 
             public String getSwitchStatePath() {
                 return String.format(Locale.US, "/sys/class/switch/%s/state", mDevName);
             }
 
+            public String getDrmPath() {
+                return String.format(Locale.US, "/sys/class/drm/%s/", mDevName);
+            }
+
+            public String  getDrmHdmiPath() {
+                Slog.v (TAG, "getDrmHdmiPath = "
+                              +String.format(Locale.US, "/sys/class/drm/%s/%s/status",
+                               mDevName, NAME_DRM_HDMI));
+                return String.format(Locale.US, "/sys/class/drm/%s/%s/status", mDevName, NAME_DRM_HDMI);
+            }
+
+            public String  getDrmDpPath() {
+                Slog.v (TAG, "getDrmDpPath = "
+                              +String.format(Locale.US, "/sys/class/drm/%s/%s/status",
+                               mDevName, NAME_DRM_DP));
+                return String.format(Locale.US, "/sys/class/drm/%s/%s/status", mDevName, NAME_DRM_DP);
+            }
+
             public boolean checkSwitchExists() {
                 File f = new File(getSwitchStatePath());
+                return f.exists();
+            }
+
+            public boolean checkPathExists(String filePath) {
+                File f = new File(filePath);
                 return f.exists();
             }
 

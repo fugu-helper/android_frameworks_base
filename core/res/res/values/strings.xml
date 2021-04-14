@@ -3804,6 +3804,9 @@
     <!-- Name of the HDMI display.  [CHAR LIMIT=50] -->
     <string name="display_manager_hdmi_display_name">HDMI Screen</string>
 
+    <!-- Name of the DP display.  [CHAR LIMIT=50] -->
+    <string name="display_manager_dp_display_name">DP Screen</string>
+
     <!-- Name of the N'th overlay display for testing.  [CHAR LIMIT=50] -->
     <string name="display_manager_overlay_display_name">Overlay #<xliff:g id="id">%1$d</xliff:g></string>
 

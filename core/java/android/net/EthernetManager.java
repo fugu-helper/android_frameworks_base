@@ -16,14 +16,32 @@
 
 package android.net;
 
-import android.annotation.SystemService;
 import android.content.Context;
 import android.net.IEthernetManager;
 import android.net.IEthernetServiceListener;
 import android.net.IpConfiguration;
 import android.os.Handler;
 import android.os.Message;
+import android.os.Binder;
+import android.os.IBinder;
+import android.os.ServiceManager;
 import android.os.RemoteException;
+/* Dual Ethernet Changes start */
+import android.os.Binder;
+import android.os.IBinder;
+import android.os.ServiceManager;
+/* Dual Ethernet Changes end */
+import android.os.RemoteException;
+/* Dual Ethernet Changes start */
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.os.INetworkManagementService;
+import android.net.IpConfiguration.IpAssignment;
+import android.net.IpConfiguration.ProxySettings;
+import android.net.NetworkInfo;
+import android.net.InterfaceConfiguration;
+import android.content.*;
+import android.util.Log;
 
 import java.util.ArrayList;
 
@@ -32,11 +50,12 @@ import java.util.ArrayList;
  *
  * @hide
  */
-@SystemService(Context.ETHERNET_SERVICE)
 public class EthernetManager {
     private static final String TAG = "EthernetManager";
     private static final int MSG_AVAILABILITY_CHANGED = 1000;
-
+    /* Dual Ethernet Changes start */
+    private static final int MSG_AVAILABILITY_CHANGED_ETH1 = 1001;
+    /* Dual Ethernet Changes end */
     private final Context mContext;
     private final IEthernetManager mService;
     private final Handler mHandler = new Handler() {
@@ -45,9 +64,20 @@ public class EthernetManager {
             if (msg.what == MSG_AVAILABILITY_CHANGED) {
                 boolean isAvailable = (msg.arg1 == 1);
                 for (Listener listener : mListeners) {
+                    Log.d(TAG, "ETH0 onAvailabilityChanged isAvailable" + isAvailable);
                     listener.onAvailabilityChanged(isAvailable);
                 }
             }
+
+            /* Dual Ethernet Changes Start */
+            if(msg.what == MSG_AVAILABILITY_CHANGED_ETH1) {
+                boolean isAvailable = (msg.arg1 == 1);
+                for (Listener listener : mEth1Listeners) {
+                    Log.d(TAG, "ETH1 onAvailabilityChanged isAvailable" + isAvailable);
+                    listener.onAvailabilityChanged(isAvailable);
+                }
+            }
+            /* Dual Ethernet Changes end */
         }
     };
     private final ArrayList<Listener> mListeners = new ArrayList<Listener>();
@@ -55,10 +85,28 @@ public class EthernetManager {
             new IEthernetServiceListener.Stub() {
                 @Override
                 public void onAvailabilityChanged(boolean isAvailable) {
+                    Log.d(TAG, "ETH0 MSG_AVAILABILITY_CHANGED isAvailable" + isAvailable);
                     mHandler.obtainMessage(
                             MSG_AVAILABILITY_CHANGED, isAvailable ? 1 : 0, 0, null).sendToTarget();
                 }
             };
+
+    /* Dual Ethernet Changes start */
+    private final ArrayList<Listener> mEth1Listeners = new ArrayList<Listener>();
+
+    private final IEthernetServiceListener.Stub mEth1ServiceListener =
+            new IEthernetServiceListener.Stub() {
+                @Override
+                public void onAvailabilityChanged(boolean isAvailable) {
+                    Log.d(TAG, "ETH1 MSG_AVAILABILITY_CHANGED_ETH1 isAvailable" + isAvailable);
+                    mHandler.obtainMessage(
+                            MSG_AVAILABILITY_CHANGED_ETH1, isAvailable ? 1 : 0, 0, null).sendToTarget();
+                }
+            };
+    /* Dual Ethernet Changes end */
+
+    private ConnectivityManager mConnectivityManager;
+    private INetworkManagementService mNMService;
 
     /**
      * A listener interface to receive notification on changes in Ethernet.
@@ -80,6 +128,11 @@ public class EthernetManager {
     public EthernetManager(Context context, IEthernetManager service) {
         mContext = context;
         mService = service;
+
+        mConnectivityManager = (ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        IBinder b = ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
+        mNMService = INetworkManagementService.Stub.asInterface(b);
     }
 
     /**
@@ -154,4 +207,260 @@ public class EthernetManager {
             }
         }
     }
+
+    /* Dual Ethernet Changes start */
+    /**
+     * Get Current EthernetInfo.
+     */
+    public EthernetInfo getEthernetInfo() {
+        EthernetInfo mEthernetInfo = new EthernetInfo();
+        NetworkInfo mNetworkInfo = getEthernetNetworkInfo();
+        //mConnectivityManager.getNetworkInfo(ConnectivityManager.TYPE_ETHERNET);
+        LinkProperties mLinkProperties = getEthernetLinkProperties();
+             //mConnectivityManager.getLinkProperties(ConnectivityManager.TYPE_ETHERNET);
+
+	if (mLinkProperties != null) {
+	     String hwAddr = null;
+	     String iface = mLinkProperties.getInterfaceName();
+
+	     if (iface != null) {
+		try {
+		    InterfaceConfiguration config = mNMService.getInterfaceConfig(iface);
+		    hwAddr = config.getHardwareAddress();
+
+		    if (hwAddr == null) {
+			Log.e(TAG, "Failed to get hardware adddress for " + iface);
+		    }
+		    else {
+			mEthernetInfo.setHwAddress(hwAddr);
+		    }
+		} catch (NullPointerException | RemoteException e) {
+			Log.e(TAG, "Failed to get InterfaceConfiguration");
+		}
+	     } else {
+		     Log.e(TAG, "Failed to get iface");
+	     }
+	}
+
+        IpConfiguration mIpConfig = getConfiguration();
+        mEthernetInfo.setNetworkInfo(mNetworkInfo);
+        mEthernetInfo.setLinkProperties(mLinkProperties);
+        mEthernetInfo.setIpConfiguration(mIpConfig);
+
+        if (isAvailable())
+            mEthernetInfo.setInterfaceStatus(EthernetInfo.InterfaceStatus.ENABLED);
+        else
+            mEthernetInfo.setInterfaceStatus(EthernetInfo.InterfaceStatus.DISABLED);
+
+        return mEthernetInfo;
+    }
+
+        /**
+     * Get Current EthernetInfo.
+     */
+    public EthernetInfo getPluggedInEthernetInfo() {
+        EthernetInfo mPluggedinEthernetInfo = new EthernetInfo();
+
+        NetworkInfo mNetworkInfo = getPluggedinNetworkInfo();
+        LinkProperties mLinkProperties = getPluggedinLinkProperties();
+        IpConfiguration mIpConfig = getPluggedInEthernetConfiguration();
+
+        Log.d(TAG, "mNetworkInfo: " + mNetworkInfo.toString());
+        Log.d(TAG, "mLinkProperties " + mLinkProperties.toString());
+        Log.d(TAG, "mIpConfig " + mIpConfig.toString());
+
+        if (mLinkProperties != null) {
+             String hwAddr = null;
+             String iface = mLinkProperties.getInterfaceName();
+
+            if (iface != null) {
+                try {
+                    InterfaceConfiguration config = mNMService.getInterfaceConfig(iface);
+                    hwAddr = config.getHardwareAddress();
+                    if (hwAddr == null) {
+                        Log.e(TAG, "Failed to get hardware adddress for " + iface);
+                    } else {
+                        mPluggedinEthernetInfo.setHwAddress(hwAddr);
+                    }
+                } catch (NullPointerException | RemoteException e) {
+                    Log.e(TAG, "Failed to get InterfaceConfiguration");
+                }
+            } else {
+                Log.e(TAG, "Failed to get iface");
+            }
+        }
+
+        mPluggedinEthernetInfo.setIpConfiguration(mIpConfig);
+        mPluggedinEthernetInfo.setNetworkInfo(mNetworkInfo);
+        mPluggedinEthernetInfo.setLinkProperties(mLinkProperties);
+
+
+        if (isPluggedInEthAvailable())
+            mPluggedinEthernetInfo.setInterfaceStatus(EthernetInfo.InterfaceStatus.ENABLED);
+        else
+            mPluggedinEthernetInfo.setInterfaceStatus(EthernetInfo.InterfaceStatus.DISABLED);
+
+        return mPluggedinEthernetInfo;
+    }
+
+    /**
+     * Reconnect ethernet
+     */
+    public void reconnect() {
+        try {
+            mService.reconnect();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+    }
+
+    /**
+     * Teardown ethernet
+     */
+    public void teardown() {
+        try {
+            mService.teardown();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+    }
+
+    public LinkProperties getEthernetLinkProperties() {
+        try {
+            return mService.getEthernetLinkProperties();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+        return null;
+    }
+
+    public NetworkInfo getEthernetNetworkInfo() {
+        try {
+            return mService.getEthernetNetworkInfo();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Adds a listener.
+     * @param listener A {@link Listener} to add.
+     * @throws IllegalArgumentException If the listener is null.
+     */
+    public void addPluggedinEthListener(Listener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        mEth1Listeners.add(listener);
+        if (mEth1Listeners.size() == 1) {
+            try {
+                mService.addPluggedinEthListener(mEth1ServiceListener);
+            } catch (NullPointerException | RemoteException e) {
+            }
+        }
+    }
+
+    /**
+     * Removes a listener.
+     * @param listener A {@link Listener} to remove.
+     * @throws IllegalArgumentException If the listener is null.
+     */
+    public void removePluggedinEthListener(Listener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        mEth1Listeners.remove(listener);
+        if (mEth1Listeners.isEmpty()) {
+            try {
+                mService.removePluggedinEthListener(mEth1ServiceListener);
+            } catch (NullPointerException | RemoteException e) {
+            }
+        }
+    }
+
+    /**
+     * Indicates whether PluggedIn Ethernet is connected.
+     */
+    public boolean isPluggedInEthAvailable() {
+        try {
+            return mService.isPluggedInEthAvailable();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Connect to PluggedIn Ethernet.interface (ETH1)
+     * @throws RemoteException if service is not reachable.
+     */
+    public void connectPluggedinEth() {
+        try {
+            mService.connectPluggedinEth();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+    }
+
+    /**
+     * Teardown PluggedIn Ethernet.interface (ETH1)
+     * @throws RemoteException if service is not reachable.
+     */
+    public void teardownPluggedinEth() {
+        try {
+            mService.teardownPluggedinEth();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+    }
+
+    public LinkProperties getPluggedinLinkProperties() {
+        try {
+            return mService.getPluggedinLinkProperties();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+        return null;
+    }
+
+    public NetworkInfo getPluggedinNetworkInfo() {
+        try {
+            return mService.getPluggedinNetworkInfo();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to communicate with EthernetService: " +
+            e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Get PluggedInEthernet configuration.
+     * @return the Ethernet Configuration, contained in {@link IpConfiguration}.
+     */
+    public IpConfiguration getPluggedInEthernetConfiguration() {
+        try {
+            return mService.getPluggedInEthernetConfiguration();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set PluggedInEthernet configuration.
+     */
+    public void setPluggedInEthernetConfiguration(IpConfiguration config) {
+        try {
+            mService.setPluggedInEthernetConfiguration(config);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /* Dual Ethernet Changes end */
 }

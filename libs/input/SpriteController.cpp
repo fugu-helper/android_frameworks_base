@@ -252,10 +252,24 @@ void SpriteController::doUpdateSprites() {
         if (update.state.surfaceControl != NULL && (becomingVisible || becomingHidden
                 || (wantSurfaceVisibleAndDrawn && (update.state.dirty & (DIRTY_ALPHA
                         | DIRTY_POSITION | DIRTY_TRANSFORMATION_MATRIX | DIRTY_LAYER
+#ifndef TRIPLE_DISP
                         | DIRTY_VISIBILITY | DIRTY_HOTSPOT))))) {
+#else
+                        | DIRTY_VISIBILITY | DIRTY_HOTSPOT | DIRTY_LAYERSTACK))))) {
+#endif
             status_t status;
             if (!haveTransaction) {
                 SurfaceComposerClient::openGlobalTransaction();
+#ifdef TRIPLE_DISP
+              int32_t layerstack = update.state.layerStack;
+              if (layerstack >= 0 && wantSurfaceVisibleAndDrawn
+                   && (becomingVisible || (update.state.dirty & DIRTY_LAYERSTACK))) {
+                status = update.state.surfaceControl->setLayerStack(layerstack);
+                if (status) {
+                    ALOGE("Error %d setting sprite surface layer stack.", status);
+                }
+            }
+#endif
                 haveTransaction = true;
             }
 
@@ -346,6 +360,17 @@ void SpriteController::doUpdateSprites() {
     // while already held.
     updates.clear();
 }
+
+#ifdef TRIPLE_DISP
+ void SpriteController::SpriteImpl::setLayerStack(int32_t layerstack) {
+     AutoMutex _l(mController->mLock);
+
+    if (mLocked.state.layerStack != layerstack) {
+        mLocked.state.layerStack = layerstack;
+        invalidateLocked(DIRTY_LAYERSTACK);
+    }
+}
+#endif
 
 void SpriteController::doDisposeSurfaces() {
     // Collect disposed surfaces.

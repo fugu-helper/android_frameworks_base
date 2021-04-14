@@ -104,10 +104,20 @@ public:
     virtual void setSpots(const PointerCoords* spotCoords,
             const uint32_t* spotIdToIndex, BitSet32 spotIdBits);
     virtual void clearSpots();
-
+#ifdef TRIPLE_DISP
+    virtual int32_t getFocusDisplayId();
+#endif
     void updatePointerIcon(int32_t iconId);
     void setCustomPointerIcon(const SpriteIcon& icon);
+#ifndef TRIPLE_DISP
     void setDisplayViewport(int32_t width, int32_t height, int32_t orientation);
+#else
+    void setDisplayViewport(int32_t width, int32_t height, int32_t orientation, int32_t layerstack);
+    void setSecondDisplayViewport(int32_t width, int32_t height, int32_t orientation,
+                                  int32_t displayId, int32_t layerstack);
+    void setThirdDisplayViewport(int32_t width, int32_t height, int32_t orientation,
+                                 int32_t layerstack, int32_t displayId);
+#endif
     void setInactivityTimeout(InactivityTimeout inactivityTimeout);
     void reloadPointerResources();
 
@@ -160,7 +170,23 @@ private:
         int32_t displayWidth;
         int32_t displayHeight;
         int32_t displayOrientation;
+#ifdef TRIPLE_DISP
+        int32_t displayLayerstack;
 
+        int32_t secondDisplayWidth;
+        int32_t secondDisplayHeight;
+        int32_t secondDisplayOrientation;
+        int32_t secondDisplayLayerstack;
+        int32_t secondDisplayId;
+
+        int32_t thirdDisplayWidth;
+        int32_t thirdDisplayHeight;
+        int32_t thirdDisplayOrientation;
+        int32_t thirdDisplayLayerstack;
+        int32_t thirdDisplayId;
+
+        int32_t focusDisplayId;
+#endif
         InactivityTimeout inactivityTimeout;
 
         Presentation presentation;

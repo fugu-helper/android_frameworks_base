@@ -2331,6 +2331,19 @@ class DatabaseHelper extends SQLiteOpenHelper {
 
             loadUISoundEffectsSettings(stmt);
 
+            loadStringSetting(stmt,Settings.System.APP_DISPLAY_ON_EXTERNAL,
+                    R.string.def_app_display_on_external);
+
+            loadStringSetting(stmt,Settings.System.DISPLAY_ROTATION_ON_EXTERNAL,
+                    R.string.def_display_rotation_on_external);
+
+            loadStringSetting(stmt,Settings.System.DISPLAY_ROTATION_ON_SECOND_EXTERNAL,
+                    R.string.def_display_rotation_on_second_external);
+
+            loadStringSetting(stmt,Settings.System.DISPLAY_ROTATION_ON_MAIN,R.string.def_display_rotation_on_main);
+
+            loadBooleanSetting(stmt,Settings.System.HIDE_NAVIGATION_BAR,R.bool.def_hide_navigation_bar);
+
             loadIntegerSetting(stmt, Settings.System.POINTER_SPEED,
                     R.integer.def_pointer_speed);
 

@@ -84,6 +84,8 @@ import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
 import static android.view.WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_MAGNIFICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
+import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_EX;
+import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_SECOND_EX;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL;
 import static android.view.WindowManager.LayoutParams.TYPE_PHONE;
 import static android.view.WindowManager.LayoutParams.TYPE_POINTER;
@@ -262,7 +264,7 @@ import java.util.List;
  * of both of those when held.
  */
 public class PhoneWindowManager implements WindowManagerPolicy {
-    static final String TAG = "WindowManager";
+    static final String TAG = "PhoneWindowManager";
     static final boolean DEBUG = false;
     static final boolean localLOGV = false;
     static final boolean DEBUG_INPUT = false;
@@ -725,6 +727,23 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     Display mDisplay;
 
     private int mDisplayRotation;
+
+    WindowState mNavigationBarEx = null;
+    public int mNavigationBarExTop;
+
+    WindowState mNavigationBarSecondEx = null;
+    public int mNavigationBarSecondExTop;
+
+    Display mExternalDisplay;
+    Display mSecondExternalDisplay;
+
+    boolean mUserForceHideNavigationBar;
+
+    int mExternalDisplayLandscapeRotation = 0;  // default landscape rotation on external display
+    int mExternalDisplayPortraitRotation = 0;   // default portrait rotation on external display
+
+    int mSecondExternalDisplayLandscapeRotation = 0;  // default landscape rotation on external display
+    int mSecondExternalDisplayPortraitRotation = 0;   // default portrait rotation on external display
 
     int mLandscapeRotation = 0;  // default landscape rotation
     int mSeascapeRotation = 0;   // "other" landscape rotation, 180 degrees from mLandscapeRotation
@@ -2184,89 +2203,135 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 com.android.internal.R.integer.config_navBarOpacityMode);
     }
 
+    public int getDisplayInitRotation(Display display, int Orientation) {
+        if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+            switch (Orientation) {
+                case GET_LANDSCAPE_ROTATION:
+                    return mLandscapeRotation;
+                case GET_PORTRAIL_ROTATION:
+                    return mPortraitRotation;
+                default:
+                    return -1;
+        }
+        } else if (display.getDisplayId() == Display.EXTERNAL_DISPLAY) {
+            switch (Orientation) {
+                case GET_LANDSCAPE_ROTATION:
+                    return mExternalDisplayLandscapeRotation;
+                case GET_PORTRAIL_ROTATION:
+                    return mExternalDisplayPortraitRotation;
+                default:
+                    return -1;
+            }
+        } else if (display.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+            switch (Orientation) {
+                case GET_LANDSCAPE_ROTATION:
+                    return mSecondExternalDisplayLandscapeRotation;
+                case GET_PORTRAIL_ROTATION:
+                    return mSecondExternalDisplayPortraitRotation;
+                default:
+                    return -1;
+            }
+        }
+        return -1;
+    }
+
     @Override
     public void setInitialDisplaySize(Display display, int width, int height, int density) {
         // This method might be called before the policy has been fully initialized
         // or for other displays we don't care about.
         // TODO(multi-display): Define policy for secondary displays.
-        if (mContext == null || display.getDisplayId() != DEFAULT_DISPLAY) {
-            return;
+       if (mContext == null) {
+           return;
+       }
+       if (display.getDisplayId() == Display.EXTERNAL_DISPLAY) {
+           mExternalDisplay = display;
+           if (width > height) {
+               mExternalDisplayLandscapeRotation = Surface.ROTATION_0;
+               mExternalDisplayPortraitRotation = Surface.ROTATION_90;
+           } else {
+               mExternalDisplayPortraitRotation = Surface.ROTATION_0;
+               mExternalDisplayLandscapeRotation = Surface.ROTATION_90;
+           }
+       } else if (display.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+           mExternalDisplay = display;
+           if (width > height) {
+               mSecondExternalDisplayLandscapeRotation = Surface.ROTATION_0;
+               mSecondExternalDisplayPortraitRotation = Surface.ROTATION_90;
+           } else {
+               mSecondExternalDisplayPortraitRotation = Surface.ROTATION_0;
+               mSecondExternalDisplayLandscapeRotation = Surface.ROTATION_90;
+           }
+       }  else {
+           mDisplay = display;
+           final Resources res = mContext.getResources();
+           int shortSize, longSize;
+           if (width > height) {
+               shortSize = height;
+               longSize = width;
+               mLandscapeRotation = Surface.ROTATION_0;
+               mSeascapeRotation = Surface.ROTATION_180;
+               if (res.getBoolean(com.android.internal.R.bool.config_reverseDefaultRotation)) {
+                   mPortraitRotation = Surface.ROTATION_90;
+                   mUpsideDownRotation = Surface.ROTATION_270;
+               } else {
+                   mPortraitRotation = Surface.ROTATION_270;
+                   mUpsideDownRotation = Surface.ROTATION_90;
+               }
+           } else {
+               shortSize = width;
+               longSize = height;
+               mPortraitRotation = Surface.ROTATION_0;
+               mUpsideDownRotation = Surface.ROTATION_180;
+               if (res.getBoolean(com.android.internal.R.bool.config_reverseDefaultRotation)) {
+                   mLandscapeRotation = Surface.ROTATION_270;
+                   mSeascapeRotation = Surface.ROTATION_90;
+               } else {
+                   mLandscapeRotation = Surface.ROTATION_90;
+                   mSeascapeRotation = Surface.ROTATION_270;
+               }
+           }
+           // SystemUI (status bar) layout policy
+           int shortSizeDp = shortSize * DisplayMetrics.DENSITY_DEFAULT / density;
+           int longSizeDp = longSize * DisplayMetrics.DENSITY_DEFAULT / density;
+           // Allow the navigation bar to move on non-square small devices (phones).
+           mNavigationBarCanMove = width != height && shortSizeDp < 600;
+           mHasNavigationBar = res.getBoolean(com.android.internal.R.bool.config_showNavigationBar);
+           // Allow a system property to override this. Used by the emulator.
+           // See also hasNavigationBar().
+           String navBarOverride = SystemProperties.get("qemu.hw.mainkeys");
+           if ("1".equals(navBarOverride)) {
+               mHasNavigationBar = false;
+           } else if ("0".equals(navBarOverride)) {
+               mHasNavigationBar = true;
+	   }
+
+           // For demo purposes, allow the rotation of the HDMI display to be controlled.
+           // By default, HDMI locks rotation to landscape.
+           if ("portrait".equals(SystemProperties.get("persist.demo.hdmirotation"))) {
+              mDemoHdmiRotation = mPortraitRotation;
+           } else {
+              mDemoHdmiRotation = mLandscapeRotation;
+           }
+           mDemoHdmiRotationLock = SystemProperties.getBoolean("persist.demo.hdmirotationlock", false);
+           // For demo purposes, allow the rotation of the remote display to be controlled.
+           // By default, remote display locks rotation to landscape.
+           if ("portrait".equals(SystemProperties.get("persist.demo.remoterotation"))) {
+               mDemoRotation = mPortraitRotation;
+           } else {
+               mDemoRotation = mLandscapeRotation;
+           }
+           mDemoRotationLock = SystemProperties.getBoolean(
+                       "persist.demo.rotationlock", false);
+
+           // Only force the default orientation if the screen is xlarge, at least 960dp x 720dp, per
+           // http://developer.android.com/guide/practices/screens_support.html#range
+           mForceDefaultOrientation = longSizeDp >= 960 && shortSizeDp >= 720 &&
+                   res.getBoolean(com.android.internal.R.bool.config_forceDefaultOrientation) &&
+           // For debug purposes the next line turns this feature off with:
+           // $ adb shell setprop config.override_forced_orient true
+           // $ adb shell wm size reset
+                  !"true".equals(SystemProperties.get("config.override_forced_orient"));
         }
-        mDisplay = display;
-
-        final Resources res = mContext.getResources();
-        int shortSize, longSize;
-        if (width > height) {
-            shortSize = height;
-            longSize = width;
-            mLandscapeRotation = Surface.ROTATION_0;
-            mSeascapeRotation = Surface.ROTATION_180;
-            if (res.getBoolean(com.android.internal.R.bool.config_reverseDefaultRotation)) {
-                mPortraitRotation = Surface.ROTATION_90;
-                mUpsideDownRotation = Surface.ROTATION_270;
-            } else {
-                mPortraitRotation = Surface.ROTATION_270;
-                mUpsideDownRotation = Surface.ROTATION_90;
-            }
-        } else {
-            shortSize = width;
-            longSize = height;
-            mPortraitRotation = Surface.ROTATION_0;
-            mUpsideDownRotation = Surface.ROTATION_180;
-            if (res.getBoolean(com.android.internal.R.bool.config_reverseDefaultRotation)) {
-                mLandscapeRotation = Surface.ROTATION_270;
-                mSeascapeRotation = Surface.ROTATION_90;
-            } else {
-                mLandscapeRotation = Surface.ROTATION_90;
-                mSeascapeRotation = Surface.ROTATION_270;
-            }
-        }
-
-        // SystemUI (status bar) layout policy
-        int shortSizeDp = shortSize * DisplayMetrics.DENSITY_DEFAULT / density;
-        int longSizeDp = longSize * DisplayMetrics.DENSITY_DEFAULT / density;
-
-        // Allow the navigation bar to move on non-square small devices (phones).
-        mNavigationBarCanMove = width != height && shortSizeDp < 600;
-
-        mHasNavigationBar = res.getBoolean(com.android.internal.R.bool.config_showNavigationBar);
-
-        // Allow a system property to override this. Used by the emulator.
-        // See also hasNavigationBar().
-        String navBarOverride = SystemProperties.get("qemu.hw.mainkeys");
-        if ("1".equals(navBarOverride)) {
-            mHasNavigationBar = false;
-        } else if ("0".equals(navBarOverride)) {
-            mHasNavigationBar = true;
-        }
-
-        // For demo purposes, allow the rotation of the HDMI display to be controlled.
-        // By default, HDMI locks rotation to landscape.
-        if ("portrait".equals(SystemProperties.get("persist.demo.hdmirotation"))) {
-            mDemoHdmiRotation = mPortraitRotation;
-        } else {
-            mDemoHdmiRotation = mLandscapeRotation;
-        }
-        mDemoHdmiRotationLock = SystemProperties.getBoolean("persist.demo.hdmirotationlock", false);
-
-        // For demo purposes, allow the rotation of the remote display to be controlled.
-        // By default, remote display locks rotation to landscape.
-        if ("portrait".equals(SystemProperties.get("persist.demo.remoterotation"))) {
-            mDemoRotation = mPortraitRotation;
-        } else {
-            mDemoRotation = mLandscapeRotation;
-        }
-        mDemoRotationLock = SystemProperties.getBoolean(
-                "persist.demo.rotationlock", false);
-
-        // Only force the default orientation if the screen is xlarge, at least 960dp x 720dp, per
-        // http://developer.android.com/guide/practices/screens_support.html#range
-        mForceDefaultOrientation = longSizeDp >= 960 && shortSizeDp >= 720 &&
-                res.getBoolean(com.android.internal.R.bool.config_forceDefaultOrientation) &&
-                // For debug purposes the next line turns this feature off with:
-                // $ adb shell setprop config.override_forced_orient true
-                // $ adb shell wm size reset
-                !"true".equals(SystemProperties.get("config.override_forced_orient"));
     }
 
     /**
@@ -2309,6 +2374,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     Settings.Secure.INCALL_BACK_BUTTON_BEHAVIOR,
                     Settings.Secure.INCALL_BACK_BUTTON_BEHAVIOR_DEFAULT,
                     UserHandle.USER_CURRENT);
+            mUserForceHideNavigationBar =  (Settings.System.getIntForUser(resolver,
+                    Settings.System.HIDE_NAVIGATION_BAR, 0, UserHandle.USER_CURRENT) != 0);
 
             // Configure wake gesture.
             boolean wakeGestureEnabledSetting = Settings.Secure.getIntForUser(resolver,
@@ -3068,6 +3135,33 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         mNavBarVisibilityListener, true);
                 if (DEBUG_LAYOUT) Slog.i(TAG, "NAVIGATION BAR: " + mNavigationBar);
                 break;
+            case TYPE_NAVIGATION_BAR_EX:
+                mContext.enforceCallingOrSelfPermission(
+                        android.Manifest.permission.STATUS_BAR_SERVICE,
+                        "PhoneWindowManager");
+                if (mNavigationBarEx != null) {
+                    if (mNavigationBarEx.isAlive()) {
+                        return WindowManagerGlobal.ADD_MULTIPLE_SINGLETON;
+                    }
+                }
+                mNavigationBarEx = win;
+                if (DEBUG_LAYOUT) Slog.i(TAG, "NAVIGATION BAR EX: " + mNavigationBar);
+
+                break;
+
+            case TYPE_NAVIGATION_BAR_SECOND_EX:
+                mContext.enforceCallingOrSelfPermission(
+                        android.Manifest.permission.STATUS_BAR_SERVICE,
+                        "PhoneWindowManager");
+                if (mNavigationBarSecondEx != null) {
+                    if (mNavigationBarSecondEx.isAlive()) {
+                        return WindowManagerGlobal.ADD_MULTIPLE_SINGLETON;
+                    }
+                }
+                mNavigationBarSecondEx = win;
+                if (DEBUG_LAYOUT) Slog.i(TAG, "NAVIGATION BAR Second EX: " + mNavigationBar);
+
+                break;
             case TYPE_NAVIGATION_BAR_PANEL:
             case TYPE_STATUS_BAR_PANEL:
             case TYPE_STATUS_BAR_SUB_PANEL:
@@ -3089,6 +3183,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         } else if (mNavigationBar == win) {
             mNavigationBar = null;
             mNavigationBarController.setWindow(null);
+        } else if(mNavigationBarEx == win) {
+            mNavigationBarEx = null;
+        } else if(mNavigationBarSecondEx == win) {
+            mNavigationBarSecondEx = null;
         }
     }
 
@@ -4422,10 +4520,32 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     break;
             }
         } else {
-            overscanLeft = 0;
-            overscanTop = 0;
-            overscanRight = 0;
-            overscanBottom = 0;
+            switch (displayRotation) {
+                case Surface.ROTATION_90:
+                    overscanLeft = mOverscanTop;
+                    overscanTop = mOverscanRight;
+                    overscanRight = mOverscanBottom;
+                    overscanBottom = mOverscanLeft;
+                    break;
+                case Surface.ROTATION_180:
+                    overscanLeft = mOverscanRight;
+                    overscanTop = mOverscanBottom;
+                    overscanRight = mOverscanLeft;
+                    overscanBottom = mOverscanTop;
+                     break;
+                case Surface.ROTATION_270:
+                    overscanLeft = mOverscanBottom;
+                    overscanTop = mOverscanLeft;
+                    overscanRight = mOverscanTop;
+                    overscanBottom = mOverscanRight;
+                    break;
+                default:
+                    overscanLeft = mOverscanLeft;
+                    overscanTop = mOverscanTop;
+                    overscanRight = mOverscanRight;
+                    overscanBottom = mOverscanBottom;
+                    break;
+            }
         }
         mOverscanScreenLeft = mRestrictedOverscanScreenLeft = 0;
         mOverscanScreenTop = mRestrictedOverscanScreenTop = 0;
@@ -4466,7 +4586,27 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         pf.bottom = df.bottom = of.bottom = vf.bottom = mDockBottom;
         dcf.setEmpty();  // Decor frame N/A for system bars.
 
-        if (isDefaultDisplay) {
+        if (!isDefaultDisplay) {
+            if (mNavigationBarEx != null) {
+                mNavigationBarExTop = displayHeight - overscanBottom - 72;
+                mTmpNavigationFrame.set(0, mNavigationBarExTop, displayWidth,
+                                        (displayHeight - overscanBottom));
+                mNavigationBarEx.computeFrameLw(mTmpNavigationFrame, mTmpNavigationFrame,
+                                                mTmpNavigationFrame, mTmpNavigationFrame,
+                                                mTmpNavigationFrame, dcf,
+                                                mTmpNavigationFrame,mTmpNavigationFrame);
+            }
+            if (mNavigationBarSecondEx != null) {
+                mNavigationBarSecondExTop = displayHeight - overscanBottom - 72;
+                mTmpNavigationFrame.set(0, mNavigationBarSecondExTop, displayWidth,
+                                        (displayHeight - overscanBottom));
+                mNavigationBarSecondEx.computeFrameLw(mTmpNavigationFrame, mTmpNavigationFrame,
+                                                      mTmpNavigationFrame, mTmpNavigationFrame,
+                                                      mTmpNavigationFrame, dcf,
+                                                      mTmpNavigationFrame,
+                                                      mTmpNavigationFrame);
+            }
+        } else {
             // For purposes of putting out fake window up to steal focus, we will
             // drive nav being hidden only by whether it is requested.
             final int sysui = mLastSystemUiFlags;
@@ -4820,7 +4960,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     public void layoutWindowLw(WindowState win, WindowState attached) {
         // We've already done the navigation bar and status bar. If the status bar can receive
         // input, we need to layout it again to accomodate for the IME window.
-        if ((win == mStatusBar && !canReceiveInput(win)) || win == mNavigationBar) {
+
+        if ((win == mStatusBar && !canReceiveInput(win)) || win == mNavigationBar ||
+             win == mNavigationBarEx || win == mNavigationBarSecondEx) {
             return;
         }
         final WindowManager.LayoutParams attrs = win.getAttrs();
@@ -7074,7 +7216,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     @Override
     public int rotationForOrientationLw(int orientation, int lastRotation) {
-        if (false) {
+        if (true) {
             Slog.v(TAG, "rotationForOrientationLw(orient="
                         + orientation + ", last=" + lastRotation
                         + "); user=" + mUserRotation + " "
@@ -7086,7 +7228,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mForceDefaultOrientation) {
             return Surface.ROTATION_0;
         }
-
         synchronized (mLock) {
             int sensorRotation = mOrientationListener.getProposedRotation(); // may be -1
             if (sensorRotation < 0) {

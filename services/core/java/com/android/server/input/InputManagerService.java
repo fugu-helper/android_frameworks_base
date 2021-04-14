@@ -199,7 +199,7 @@ public class InputManagerService extends IInputManager.Stub
             int displayId, int rotation,
             int logicalLeft, int logicalTop, int logicalRight, int logicalBottom,
             int physicalLeft, int physicalTop, int physicalRight, int physicalBottom,
-            int deviceWidth, int deviceHeight, String uniqueId);
+            int deviceWidth, int deviceHeight, int layerstack, String uniqueId);
 
     private static native int nativeGetScanCodeState(long ptr,
             int deviceId, int sourceMask, int scanCode);
@@ -221,6 +221,10 @@ public class InputManagerService extends IInputManager.Stub
     private static native void nativeSetInputDispatchMode(long ptr, boolean enabled, boolean frozen);
     private static native void nativeSetSystemUiVisibility(long ptr, int visibility);
     private static native void nativeSetFocusedApplication(long ptr,
+            InputApplicationHandle application);
+    private static native void nativeSetFocusedApplicationOnExternal(long ptr,
+            InputApplicationHandle application);
+    private static native void nativeSetFocusedApplicationOnSecondExternal(long ptr,
             InputApplicationHandle application);
     private static native boolean nativeTransferTouchFocus(long ptr,
             InputChannel fromChannel, InputChannel toChannel);
@@ -300,7 +304,8 @@ public class InputManagerService extends IInputManager.Stub
     // Viewport constants defined in InputReader.h.
     public static final int VIEWPORT_DEFAULT = 1;
     public static final int VIEWPORT_EXTERNAL = 2;
-    public static final int VIEWPORT_VIRTUAL = 3;
+    public static final int VIEWPORT_SECOND_EXTERNAL = 3;
+    public static final int VIEWPORT_VIRTUAL = 4;
 
     public static final int SW_LID_BIT = 1 << SW_LID;
     public static final int SW_TABLET_MODE_BIT = 1 << SW_TABLET_MODE;
@@ -419,8 +424,9 @@ public class InputManagerService extends IInputManager.Stub
     }
 
     private void setDisplayViewportsInternal(DisplayViewport defaultViewport,
-            DisplayViewport externalTouchViewport,
+            DisplayViewport externalTouchViewport, DisplayViewport secondExternalTouchViewport,
             List<DisplayViewport> virtualTouchViewports) {
+
         if (defaultViewport.valid) {
             setDisplayViewport(VIEWPORT_DEFAULT, defaultViewport);
         }
@@ -430,6 +436,14 @@ public class InputManagerService extends IInputManager.Stub
         } else if (defaultViewport.valid) {
             setDisplayViewport(VIEWPORT_EXTERNAL, defaultViewport);
         }
+
+        if (secondExternalTouchViewport.valid) {
+            setDisplayViewport(VIEWPORT_SECOND_EXTERNAL, secondExternalTouchViewport);
+        } else if (defaultViewport.valid) {
+            setDisplayViewport(VIEWPORT_SECOND_EXTERNAL, defaultViewport);
+        }
+
+
 
         nativeSetVirtualDisplayViewports(mPtr,
                 virtualTouchViewports.toArray(new DisplayViewport[0]));
@@ -442,7 +456,7 @@ public class InputManagerService extends IInputManager.Stub
                 viewport.logicalFrame.right, viewport.logicalFrame.bottom,
                 viewport.physicalFrame.left, viewport.physicalFrame.top,
                 viewport.physicalFrame.right, viewport.physicalFrame.bottom,
-                viewport.deviceWidth, viewport.deviceHeight, viewport.uniqueId);
+                viewport.deviceWidth, viewport.deviceHeight,viewport.layerStack, viewport.uniqueId);
     }
 
     /**
@@ -1571,6 +1585,15 @@ public class InputManagerService extends IInputManager.Stub
         nativeSetFocusedApplication(mPtr, application);
     }
 
+    public void setFocusedApplicationOnExternal(InputApplicationHandle application) {
+        nativeSetFocusedApplicationOnExternal(mPtr, application);
+    }
+
+    public void setFocusedApplicationOnSecondExternal(InputApplicationHandle application) {
+        nativeSetFocusedApplicationOnSecondExternal(mPtr, application);
+    }
+
+
     @Override
     public void requestPointerCapture(IBinder windowToken, boolean enabled) {
         if (mFocusedWindow == null || mFocusedWindow.asBinder() != windowToken) {
@@ -2001,6 +2024,13 @@ public class InputManagerService extends IInputManager.Stub
                 com.android.internal.R.integer.config_virtualKeyQuietTimeMillis);
     }
 
+    private void updateFocusDisplay(int displayId) {
+        if (DEBUG) {
+            Slog.v(TAG," InputManagerService New focus display id = " + displayId);
+        }
+        mWindowManagerCallbacks.updateFocusDisplay(displayId);
+    }
+
     // Native callback.
     private String[] getExcludedDeviceNames() {
         ArrayList<String> names = new ArrayList<String>();
@@ -2145,6 +2175,9 @@ public class InputManagerService extends IInputManager.Stub
                 KeyEvent event, int policyFlags);
 
         public int getPointerLayer();
+
+        public void updateFocusDisplay(int displayId);
+
     }
 
     /**
@@ -2363,10 +2396,11 @@ public class InputManagerService extends IInputManager.Stub
     private final class LocalService extends InputManagerInternal {
         @Override
         public void setDisplayViewports(DisplayViewport defaultViewport,
-                DisplayViewport externalTouchViewport,
+                DisplayViewport externalTouchViewport, DisplayViewport secondExternalTouchViewport,
                 List<DisplayViewport> virtualTouchViewports) {
             setDisplayViewportsInternal(defaultViewport, externalTouchViewport,
-                    virtualTouchViewports);
+                                        secondExternalTouchViewport,
+                                        virtualTouchViewports);
         }
 
         @Override

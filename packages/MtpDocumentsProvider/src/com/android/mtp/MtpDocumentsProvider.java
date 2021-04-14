@@ -63,6 +63,8 @@ import libcore.io.IoUtils;
  * DocumentsProvider for MTP devices.
  */
 public class MtpDocumentsProvider extends DocumentsProvider {
+    public static final String ACTION_OPEN_DP_FROM_NTF = "com.android.mtp.open.dp";
+    public static final  String EXTRA_USB_DEVICE_ID = "currentId";
     static final String AUTHORITY = "com.android.mtp.documents";
     static final String TAG = "MtpDocumentsProvider";
     static final String[] DEFAULT_ROOT_PROJECTION = new String[] {

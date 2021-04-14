@@ -149,6 +149,16 @@
          >0 is milliseconds of screen-off time after which battery sounds will not play -->
     <integer name="def_low_battery_sound_timeout">0</integer>
 
+    <string name="def_app_display_on_external" translatable="false"></string>
+
+    <string name="def_display_rotation_on_external" translatable="false">landscape</string>
+
+    <string name="def_display_rotation_on_second_external" translatable="false">landscape</string>
+
+    <string name="def_display_rotation_on_main" translatable="false">none</string>
+
+    <bool name="def_hide_navigation_bar">false</bool>
+
     <!-- Initial value for the Settings.Secure.IMMERSIVE_MODE_CONFIRMATIONS setting,
          which is a comma separated list of packages that no longer need confirmation
          for immersive mode.

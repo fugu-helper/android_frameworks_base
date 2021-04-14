@@ -96,6 +96,8 @@ interface IActivityManager {
     void unhandledBack();
 
     boolean finishActivity(in IBinder token, int code, in Intent data, int finishTask);
+    void finishActivityOnExternalDisplay();
+    void finishActivityOnSecondExternalDisplay();
     Intent registerReceiver(in IApplicationThread caller, in String callerPackage,
             in IIntentReceiver receiver, in IntentFilter filter,
             in String requiredPermission, int userId, int flags);

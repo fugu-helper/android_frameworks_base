@@ -351,6 +351,7 @@ import android.util.SparseArray;
 import android.util.SparseIntArray;
 import android.util.TimeUtils;
 import android.util.Xml;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -403,6 +404,8 @@ import com.android.server.SystemService;
 import com.android.server.SystemServiceManager;
 import com.android.server.ThreadPriorityBooster;
 import com.android.server.Watchdog;
+import com.android.server.am.ActivityManagerService.AppDisplayOnExternalObserver;
+
 import com.android.server.am.ActivityStack.ActivityState;
 import com.android.server.firewall.IntentFirewall;
 import com.android.server.pm.Installer;
@@ -939,6 +942,10 @@ public class ActivityManagerService extends IActivityManager.Stub
      * compatibility mode instead of filling the screen.
      */
     final CompatModePackages mCompatModePackages;
+
+    AppDisplayOnExternalObserver mAppDisplayOnExternalObserver;
+
+    AppDisplayOnSecondExternalObserver mAppDisplayOnSecondExternalObserver;
 
     /**
      * Set of IntentSenderRecord objects that are currently active.
@@ -3153,7 +3160,15 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
         mLastResumedActivity = r;
 
-        mWindowManager.setFocusedApp(r.appToken, true);
+        if (r.info.displayId == Display.DEFAULT_DISPLAY) {
+            mWindowManager.setFocusedApp(r.appToken, true);
+        } else if(r.info.displayId == Display.EXTERNAL_DISPLAY) {
+            mWindowManager.setFocusedAppOnExternal(r.appToken, true);
+            Slog.d(TAG, "setFocusedActivityLocked is for external:" + r.info.displayId);
+        } else if(r.info.displayId == Display.SECOND_EXTERNAL_DISPLAY) {
+            Slog.d(TAG, "setFocusedActivityLocked is for Second external:" + r.info.displayId);
+            mWindowManager.setFocusedAppOnSecondExternal(r.appToken, true);
+        }
 
         applyUpdateLockStateLocked(r);
         applyUpdateVrModeLocked(r);
@@ -3957,6 +3972,13 @@ public class ActivityManagerService extends IActivityManager.Stub
 
             if (app.persistent) {
                 Watchdog.getInstance().processStarted(app.processName, startResult.pid);
+            }
+            // Register pid for multi-stream audio output
+            String altappName = SystemProperties.get("persist.sys.daudioout.altapp").trim();
+            String[] parts = app.processName.split(":");
+
+            if (parts.length > 0 && parts[0].equals(altappName)) {
+                SystemProperties.set("persist.sys.daudioout.altappid", Integer.toString(startResult.pid));
             }
 
             checkTime(startTime, "startProcess: building log message");
@@ -5096,6 +5118,36 @@ public class ActivityManagerService extends IActivityManager.Stub
             } finally {
                 Binder.restoreCallingIdentity(origId);
             }
+        }
+    }
+
+    public void finishActivityOnExternalDisplay() {
+        ActivityStack externalDisplayStack =
+                      mStackSupervisor.getExternalDisplayStack();
+        if (externalDisplayStack != null) {
+            ActivityRecord top = externalDisplayStack.topActivity();
+            final long origId = Binder.clearCallingIdentity();
+            if (top != null) {
+                boolean res = top.getStack().requestFinishActivityLocked(
+                                             top.appToken, 0, null,
+                                             "app-request", true);
+            }
+            Binder.restoreCallingIdentity(origId);
+        }
+   }
+
+    public final void finishActivityOnSecondExternalDisplay(){
+        ActivityStack SecondExternalDisplayStack =
+                      mStackSupervisor.getSecondExternalDisplayStack();
+        if (SecondExternalDisplayStack != null) {
+            ActivityRecord top = SecondExternalDisplayStack.topActivity();
+            final long origId = Binder.clearCallingIdentity();
+            if (top != null) {
+                boolean res = top.getStack().requestFinishActivityLocked(
+                                             top.appToken, 0, null,
+                                             "app-request", true);
+            }
+            Binder.restoreCallingIdentity(origId);
         }
     }
 
@@ -7062,7 +7114,7 @@ public class ActivityManagerService extends IActivityManager.Stub
             String buildSerial = appInfo.targetSandboxVersion < 2
                     ? sTheRealBuildSerial : Build.UNKNOWN;
 
-            // Check if this is a secondary process that should be incorporated into some
+            // Check if this is a Second process that should be incorporated into some
             // currently active instrumentation.  (Note we do this AFTER all of the profiling
             // stuff above because profiling can currently happen only in the primary
             // instrumentation process.)
@@ -12625,7 +12677,7 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     @Override
-    public void setLockScreenShown(boolean showing, int secondaryDisplayShowing) {
+    public void setLockScreenShown(boolean showing, int SecondDisplayShowing) {
         if (checkCallingPermission(android.Manifest.permission.DEVICE_POWER)
                 != PackageManager.PERMISSION_GRANTED) {
             throw new SecurityException("Requires permission "
@@ -12635,7 +12687,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         synchronized(this) {
             long ident = Binder.clearCallingIdentity();
             try {
-                mKeyguardController.setKeyguardShown(showing, secondaryDisplayShowing);
+                mKeyguardController.setKeyguardShown(showing, SecondDisplayShowing);
             } finally {
                 Binder.restoreCallingIdentity(ident);
             }
@@ -14091,6 +14143,12 @@ public class ActivityManagerService extends IActivityManager.Stub
             configuration.setLayoutDirection(configuration.locale);
         }
 
+        mAppDisplayOnExternalObserver = new AppDisplayOnExternalObserver(mHandler);
+        mAppDisplayOnExternalObserver.observe();
+
+        mAppDisplayOnSecondExternalObserver = new AppDisplayOnSecondExternalObserver(mHandler);
+        mAppDisplayOnSecondExternalObserver.observe();
+
         synchronized (this) {
             mDebugApp = mOrigDebugApp = debugApp;
             mWaitForDebugger = mOrigWaitForDebugger = waitForDebugger;
@@ -14143,6 +14201,58 @@ public class ActivityManagerService extends IActivityManager.Stub
             }
             mWaitForNetworkTimeoutMs = waitForNetworkTimeoutMs;
         }
+    }
+
+    class AppDisplayOnExternalObserver extends ContentObserver {
+        AppDisplayOnExternalObserver(Handler handler) {
+            super(handler);
+        }
+
+        void observe() {
+            // Observe all users' changes
+            ContentResolver resolver = mContext.getContentResolver();
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.APP_DISPLAY_ON_EXTERNAL), false, this,
+                    UserHandle.USER_ALL);
+            updateSettings();
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            updateSettings();
+        }
+    }
+
+    private void updateSettings() {
+        Log.d(TAG, "Coming to UpdateSettings of ActivityManagerService");
+        String appDisplayOnExternal = Settings.System.getString(mContext.getContentResolver(),
+        Settings.System.APP_DISPLAY_ON_EXTERNAL);
+        mActivityStarter.setAppNameDisplayOnExternal(appDisplayOnExternal);
+    }
+
+    class AppDisplayOnSecondExternalObserver extends ContentObserver {
+        AppDisplayOnSecondExternalObserver(Handler handler) {
+            super(handler);
+       }
+
+       void observe() {
+           // Observe all users' changes
+           ContentResolver resolver = mContext.getContentResolver();
+           resolver.registerContentObserver(Settings.System.getUriFor(
+                   Settings.System.APP_DISPLAY_ON_SECOND_EXTERNAL), false, this,
+                   UserHandle.USER_ALL);
+           updateSecondDisplaySettings();
+       }
+
+       @Override public void onChange(boolean selfChange) {
+           updateSecondDisplaySettings();
+        }
+    }
+
+    private void updateSecondDisplaySettings() {
+        String appDisplayOnSecondExternal = Settings.System.getString(mContext.getContentResolver(),
+               Settings.System.APP_DISPLAY_ON_SECOND_EXTERNAL);
+        mActivityStarter.setAppNameDisplayOnSecondExternal(appDisplayOnSecondExternal);
     }
 
     public void systemReady(final Runnable goingCallback, TimingsTraceLog traceLog) {
@@ -24247,6 +24357,26 @@ public class ActivityManagerService extends IActivityManager.Stub
                     mStackSupervisor.resumeFocusedStackTopActivityLocked();
                 }
             }
+        }
+
+        @Override
+        public boolean hasRunningActivity(int uid, @Nullable String packageName) {
+            if (packageName == null) return false;
+
+            synchronized (ActivityManagerService.this) {
+                for (int i = 0; i < mLruProcesses.size(); i++) {
+                    final ProcessRecord processRecord = mLruProcesses.get(i);
+                    if (processRecord.uid == uid) {
+                        for (int j = 0; j < processRecord.activities.size(); j++) {
+                            final ActivityRecord activityRecord = processRecord.activities.get(j);
+                            if (packageName.equals(activityRecord.packageName)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
         }
     }
 

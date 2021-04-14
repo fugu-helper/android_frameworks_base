@@ -98,6 +98,10 @@ public final class Display {
      */
     public static final int DEFAULT_DISPLAY = 0;
 
+    public static final int EXTERNAL_DISPLAY = 1;
+
+    public static final int SECOND_EXTERNAL_DISPLAY = 2;
+
     /**
      * Invalid display id.
      */
@@ -261,6 +265,11 @@ public final class Display {
      */
     public static final int TYPE_VIRTUAL = 5;
 
+    /**
+     * Display type: DP display.
+     * @hide
+     */
+    public static final int TYPE_DP = 6;
     /**
      * Display state: The display state is unknown.
      *

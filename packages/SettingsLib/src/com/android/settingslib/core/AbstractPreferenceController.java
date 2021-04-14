@@ -1,6 +1,7 @@
 package com.android.settingslib.core;
 
 import android.content.Context;
+import android.util.Slog;
 import android.support.v7.preference.Preference;
 import android.support.v7.preference.PreferenceGroup;
 import android.support.v7.preference.PreferenceScreen;
@@ -23,9 +24,14 @@ public abstract class AbstractPreferenceController {
       if (isAvailable()) {
           if (this instanceof Preference.OnPreferenceChangeListener) {
               final Preference preference = screen.findPreference(getPreferenceKey());
-              preference.setOnPreferenceChangeListener(
+              try {
+	          preference.setOnPreferenceChangeListener(
                       (Preference.OnPreferenceChangeListener) this);
-          }
+	      }
+	      catch(NullPointerException e){
+                  Slog.w("displayPreference-Debug","Bhoomi NullPointerException handled" +e);
+	      }
+	  }
       } else {
           removePreference(screen, getPreferenceKey());
       }

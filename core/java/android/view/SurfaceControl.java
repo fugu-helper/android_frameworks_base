@@ -246,6 +246,11 @@ public class SurfaceControl {
      */
     public static final int BUILT_IN_DISPLAY_ID_HDMI = 1;
 
+    /**
+     * Built-in physical display id: Attached DP display.
+     * Use only with {@link SurfaceControl#getBuiltInDisplay(int)}.
+     */
+    public static final int BUILT_IN_DISPLAY_ID_DP = 2;
     /* Display power modes * /
 
     /**

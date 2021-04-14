@@ -42,6 +42,10 @@ LOCAL_SRC_FILES += \
     $(LOCAL_REL_DIR)/com_android_server_GraphicsStatsService.cpp \
     $(LOCAL_REL_DIR)/onload.cpp
 
+ifeq ($(INTEL_FEATURE_TRIPLE_DISP),true)
+LOCAL_CFLAGS += -DTRIPLE_DISP
+endif
+
 LOCAL_C_INCLUDES += \
     $(JNI_H_INCLUDE) \
     external/scrypt/lib/crypto \

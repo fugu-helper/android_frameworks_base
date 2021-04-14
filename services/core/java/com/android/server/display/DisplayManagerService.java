@@ -65,6 +65,7 @@ import android.util.SparseArray;
 import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.Surface;
+import android.provider.Settings;
 import android.view.WindowManagerInternal;
 
 import com.android.server.AnimationThread;
@@ -223,6 +224,7 @@ public final class DisplayManagerService extends SystemService {
     // input from an external source.  Used by the input system.
     private final DisplayViewport mDefaultViewport = new DisplayViewport();
     private final DisplayViewport mExternalTouchViewport = new DisplayViewport();
+    private final DisplayViewport mSecondExternalTouchViewport = new DisplayViewport();
     private final ArrayList<DisplayViewport> mVirtualTouchViewports = new ArrayList<>();
 
     // Persistent data store for all internal settings maintained by the display manager service.
@@ -239,6 +241,7 @@ public final class DisplayManagerService extends SystemService {
     // input system.  May be used outside of the lock but only on the handler thread.
     private final DisplayViewport mTempDefaultViewport = new DisplayViewport();
     private final DisplayViewport mTempExternalTouchViewport = new DisplayViewport();
+    private final DisplayViewport mTempSecondExternalTouchViewport = new DisplayViewport();
     private final ArrayList<DisplayViewport> mTempVirtualTouchViewports = new ArrayList<>();
 
     // The default color mode for default displays. Overrides the usual
@@ -406,6 +409,30 @@ public final class DisplayManagerService extends SystemService {
                     sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
                     scheduleTraversalLocked(false);
                 }
+            }
+        }
+    }
+
+    public void setExternalDisplayInfoOverrideFromWindowManagerInternal(
+            int displayId, DisplayInfo info) {
+        synchronized (mSyncRoot) {
+            LogicalDisplay display = mLogicalDisplays.get(displayId);
+            if (display != null) {
+                display.setDisplayInfoOverrideFromWindowManagerLocked(info);
+                sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
+                scheduleTraversalLocked(false);
+            }
+        }
+    }
+
+    public void setSecondExternalDisplayInfoOverrideFromWindowManagerInternal(
+            int displayId, DisplayInfo info) {
+        synchronized (mSyncRoot) {
+            LogicalDisplay display = mLogicalDisplays.get(displayId);
+            if (display != null) {
+                display.setDisplayInfoOverrideFromWindowManagerLocked(info);
+                sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
+                scheduleTraversalLocked(false);
             }
         }
     }
@@ -1087,12 +1114,49 @@ public final class DisplayManagerService extends SystemService {
     private void clearViewportsLocked() {
         mDefaultViewport.valid = false;
         mExternalTouchViewport.valid = false;
+        mSecondExternalTouchViewport.valid = false;
         mVirtualTouchViewports.clear();
     }
 
     private void configureDisplayInTransactionLocked(DisplayDevice device) {
         final DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
         final boolean ownContent = (info.flags & DisplayDeviceInfo.FLAG_OWN_CONTENT_ONLY) != 0;
+
+        if(info.name.contains("HDMI")){
+            String RotationPortrait = "portrait";
+            String RotationUpsidedown = "upsidedown";
+            String RotationLandscape = "landscape";
+            String RotationSeascape = "seascape";
+            String tmp = Settings.System.getString(mContext.getContentResolver(),
+                    Settings.System.DISPLAY_ROTATION_ON_EXTERNAL);
+
+            if (RotationPortrait.equals(tmp)) {
+                info.rotation = Surface.ROTATION_270;
+            } else if (RotationUpsidedown.equals (tmp)){
+                info.rotation = Surface.ROTATION_90;
+            } else if (RotationLandscape.equals (tmp)) {
+                info.rotation = Surface.ROTATION_0;
+            } else if (RotationSeascape.equals (tmp)) {
+                info.rotation = Surface.ROTATION_180;
+            }
+        }else if(info.name.contains("DP")){
+            String RotationPortrait = "portrait";
+            String RotationUpsidedown = "upsidedown";
+            String RotationLandscape = "landscape";
+            String RotationSeascape = "seascape";
+            String tmp = Settings.System.getString(mContext.getContentResolver(),
+                    Settings.System.DISPLAY_ROTATION_ON_SECOND_EXTERNAL);
+
+            if (RotationPortrait.equals(tmp)) {
+                info.rotation = Surface.ROTATION_270;
+            } else if (RotationUpsidedown.equals (tmp)){
+                info.rotation = Surface.ROTATION_90;
+            } else if (RotationLandscape.equals (tmp)) {
+                info.rotation = Surface.ROTATION_0;
+            } else if (RotationSeascape.equals (tmp)) {
+                info.rotation = Surface.ROTATION_180;
+            }
+        }
 
         // Find the logical display that the display device is showing.
         // Certain displays only ever show their own content.
@@ -1117,6 +1181,10 @@ public final class DisplayManagerService extends SystemService {
         }
         display.configureDisplayInTransactionLocked(device, info.state == Display.STATE_OFF);
 
+        Slog.v(TAG, "info.touch " + info.touch + "DisplayDeviceInfo.TOUCH_EXTERNAL " +
+                    DisplayDeviceInfo.TOUCH_EXTERNAL +
+                    "DisplayDeviceInfo.TOUCH_SECOND_EXTERNAL = " +
+                    DisplayDeviceInfo.TOUCH_SECOND_EXTERNAL);
         // Update the viewports if needed.
         if (!mDefaultViewport.valid
                 && (info.flags & DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY) != 0) {
@@ -1127,10 +1195,18 @@ public final class DisplayManagerService extends SystemService {
             setViewportLocked(mExternalTouchViewport, display, device);
         }
 
+        if (!mSecondExternalTouchViewport.valid
+                && info.touch == DisplayDeviceInfo.TOUCH_SECOND_EXTERNAL) {
+            setViewportLocked(mSecondExternalTouchViewport, display, device);
+        }
         if (info.touch == DisplayDeviceInfo.TOUCH_VIRTUAL && !TextUtils.isEmpty(info.uniqueId)) {
             final DisplayViewport viewport = getVirtualTouchViewportLocked(info.uniqueId);
             setViewportLocked(viewport, display, device);
         }
+
+        RuntimeException here = new RuntimeException("here");
+        here.fillInStackTrace();
+        Slog.i(TAG, "configureDisplayInTransactionLocked", here);
     }
 
     /** Gets the virtual device viewport or creates it if not yet created. */
@@ -1341,6 +1417,7 @@ public final class DisplayManagerService extends SystemService {
                     synchronized (mSyncRoot) {
                         mTempDefaultViewport.copyFrom(mDefaultViewport);
                         mTempExternalTouchViewport.copyFrom(mExternalTouchViewport);
+                        mTempSecondExternalTouchViewport.copyFrom(mSecondExternalTouchViewport);
                         if (!mTempVirtualTouchViewports.equals(mVirtualTouchViewports)) {
                           mTempVirtualTouchViewports.clear();
                           for (DisplayViewport d : mVirtualTouchViewports) {
@@ -1349,7 +1426,8 @@ public final class DisplayManagerService extends SystemService {
                         }
                     }
                     mInputManagerInternal.setDisplayViewports(mTempDefaultViewport,
-                            mTempExternalTouchViewport, mTempVirtualTouchViewports);
+                            mTempExternalTouchViewport, mTempSecondExternalTouchViewport,
+                            mTempVirtualTouchViewports);
                     break;
                 }
             }
@@ -1879,6 +1957,17 @@ public final class DisplayManagerService extends SystemService {
         @Override
         public boolean isUidPresentOnDisplay(int uid, int displayId) {
             return isUidPresentOnDisplayInternal(uid, displayId);
+        }
+
+        @Override
+        public void setExternalDisplayInfoOverrideFromWindowManager(
+                int displayId, DisplayInfo info) {
+            setExternalDisplayInfoOverrideFromWindowManagerInternal(displayId,info);
+        }
+        @Override
+        public void setSecondExternalDisplayInfoOverrideFromWindowManager(
+                int displayId, DisplayInfo info) {
+            setSecondExternalDisplayInfoOverrideFromWindowManagerInternal(displayId,info);
         }
     }
 }

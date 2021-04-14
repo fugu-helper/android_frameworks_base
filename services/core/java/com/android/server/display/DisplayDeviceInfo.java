@@ -119,11 +119,15 @@ final class DisplayDeviceInfo {
     public static final int TOUCH_EXTERNAL = 2;
 
     /**
+     * Touch attachment: Touch input is via an external interface, such as USB.
+     */
+    public static final int TOUCH_SECOND_EXTERNAL = 3;
+    /**
      * Touch attachment: Touch input is via an input device matching {@link VirtualDisplay}'s
      * uniqueId.
      * @hide
      */
-    public static final int TOUCH_VIRTUAL = 3;
+    public static final int TOUCH_VIRTUAL = 4;
 
     /**
      * Diff result: The {@link #state} fields differ.

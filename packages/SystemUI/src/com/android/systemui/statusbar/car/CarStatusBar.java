@@ -424,6 +424,6 @@ public class CarStatusBar extends StatusBar implements
      * Returns the {@link Drawable} that represents the wallpaper that the user has currently set.
      */
     private Drawable getDefaultWallpaper() {
-        return mContext.getDrawable(com.android.internal.R.drawable.default_wallpaper);
+        return mContext.getDrawable(com.android.internal.R.drawable.hint_wallpaper);
     }
 }

@@ -158,6 +158,12 @@ public class ActivityInfo extends ComponentInfo
     public String targetActivity;
 
     /**
+     * The display id for activity show in.
+     * @hide
+     */
+     public int displayId;
+
+    /**
      * Token used to string together multiple events within a single launch action.
      * @hide
      */

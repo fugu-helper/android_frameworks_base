@@ -3574,6 +3574,44 @@ public final class Settings {
          */
         public static final String USER_ROTATION = "user_rotation";
 
+        /*
+        * Used for wihich application could display on external display
+        *
+        * @hide
+        **/
+        public static final String APP_DISPLAY_ON_EXTERNAL = "app_display_on_external";
+
+        /*
+        * Used for which application could display on secondary external display
+        *
+        * @hide
+        **/
+        public static final String APP_DISPLAY_ON_SECOND_EXTERNAL = "app_display_on_second_external";
+
+        /*
+        * Used for rotation on secondary external display
+        *
+        * @hide
+        **/
+        public static final String DISPLAY_ROTATION_ON_SECOND_EXTERNAL = "display_rotation_on_second_external";
+
+        /*
+        * Used for rotation on external display
+        *
+        * @hide
+        **/
+        public static final String DISPLAY_ROTATION_ON_EXTERNAL = "display_rotation_on_external";
+
+        /*
+        * Used for rotation on main display
+        *
+        * @hide
+        **/
+        public static final String DISPLAY_ROTATION_ON_MAIN = "display_rotation_on_main";
+
+
+        public static final String HIDE_NAVIGATION_BAR = "hide_navigation_bar";
+
         /** @hide */
         public static final Validator USER_ROTATION_VALIDATOR =
                 new InclusiveIntegerRangeValidator(0, 3);

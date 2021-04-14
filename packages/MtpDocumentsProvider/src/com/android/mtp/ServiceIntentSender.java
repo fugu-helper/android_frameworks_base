@@ -20,9 +20,12 @@ import android.annotation.NonNull;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.TaskStackBuilder;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.os.UserHandle;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.Preconditions;
 
@@ -79,12 +82,17 @@ class ServiceIntentSender {
         final String title = context.getResources().getString(
                 R.string.accessing_notification_title,
                 device.name);
+        Intent resultIntent = new Intent(context, ReceiverActivity.class);
+        resultIntent.setAction(MtpDocumentsProvider.ACTION_OPEN_DP_FROM_NTF);
+        resultIntent.putExtra(MtpDocumentsProvider.EXTRA_USB_DEVICE_ID, device.deviceId);
+        PendingIntent resultPendingIntent = PendingIntent.getActivity(context, 0, resultIntent, PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(context, CHANNEL_ID)
                 .setLocalOnly(true)
                 .setContentTitle(title)
                 .setSmallIcon(com.android.internal.R.drawable.stat_sys_data_usb)
                 .setCategory(Notification.CATEGORY_SYSTEM)
                 .setFlag(Notification.FLAG_NO_CLEAR, true)
+                .setContentIntent(resultPendingIntent)
                 .build();
     }
 }

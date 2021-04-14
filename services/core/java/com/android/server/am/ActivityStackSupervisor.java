@@ -169,6 +169,7 @@ import com.android.internal.util.ArrayUtils;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.server.LocalServices;
 import com.android.server.am.ActivityStack.ActivityState;
+import com.android.server.am.ActivityStackSupervisor.ActivityDisplay;
 import com.android.server.wm.PinnedStackWindowController;
 import com.android.server.wm.WindowManagerService;
 
@@ -606,7 +607,7 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
     public ActivityStackSupervisor(ActivityManagerService service, Looper looper) {
         mService = service;
         mHandler = new ActivityStackSupervisorHandler(looper);
-        mActivityMetricsLogger = new ActivityMetricsLogger(this, mService.mContext);
+        mActivityMetricsLogger = new ActivityMetricsLogger(this, mService.mContext, looper);
         mKeyguardController = new KeyguardController(service, this);
     }
 
@@ -624,6 +625,7 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
                 .newWakeLock(PARTIAL_WAKE_LOCK, "ActivityManager-Sleep");
         mLaunchingActivity = mPowerManager.newWakeLock(PARTIAL_WAKE_LOCK, "*launch*");
         mLaunchingActivity.setReferenceCounted(false);
+		mService.mActivityStarter.setmExternalNavStart(false);
     }
 
     // This function returns a IStatusBarService. The value is from ServiceManager.
@@ -706,7 +708,7 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
     /** NOTE: Should only be called from {@link ActivityStack#moveToFront} */
     void setFocusStackUnchecked(String reason, ActivityStack focusCandidate) {
         if (!focusCandidate.isFocusable()) {
-            // The focus candidate isn't focusable. Move focus to the top stack that is focusable.
+            /*  The focus candidate isn't focusable. Move focus to the top stack that is focusable. */
             focusCandidate = getNextFocusableStackLocked(focusCandidate);
         }
 
@@ -725,6 +727,77 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
                 checkFinishBootingLocked();
             }
         }
+    }
+
+    void setExternalFocusStackUnchecked(String reason, ActivityStack focusCandidate) {
+        if (!focusCandidate.isFocusable()) {
+            /* The focus candidate isn't focusable. Move focus to the top stack that is focusable.*/
+            focusCandidate = getNextFocusableStackLocked(focusCandidate);
+        }
+
+        if (focusCandidate != mFocusedStack) {
+            mLastFocusedStack = mFocusedStack;
+            mFocusedStack = focusCandidate;
+
+            EventLogTags.writeAmFocusedStack(
+                    mCurrentUser, mFocusedStack == null ? -1 : mFocusedStack.getStackId(),
+                    mLastFocusedStack == null ? -1 : mLastFocusedStack.getStackId(), reason);
+        }
+
+        final ActivityRecord r = topRunningActivityLocked();
+        if (mService.mBooting || !mService.mBooted) {
+            if (r != null && r.idle) {
+                checkFinishBootingLocked();
+            }
+        }
+    }
+
+    public ActivityStack getExternalDisplayStack(){
+        ActivityDisplay activityDisplay = mActivityDisplays.get(getExternalDisplayId());
+        if (activityDisplay != null) {
+            ArrayList<ActivityStack> stacks = activityDisplay.mStacks;
+            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                return stacks.get(stackNdx);
+            }
+        }
+        return null;
+    }
+
+    int getExternalDisplayId() {
+        DisplayManager displayManager = (DisplayManager)mService.mContext.getSystemService(Context.DISPLAY_SERVICE);
+        Display[] displays = displayManager.getDisplays();
+        int externalDisplayId = -1;
+        for (Display display : displays) {
+            if (display.getDisplayId() != Display.DEFAULT_DISPLAY) {
+                externalDisplayId = display.getDisplayId();
+                break;
+            }
+        }
+        return externalDisplayId;
+    }
+
+    int getSecondExternalDisplayId() {
+        DisplayManager displayManager = (DisplayManager)mService.mContext.getSystemService(Context.DISPLAY_SERVICE);
+        Display[] displays = displayManager.getDisplays();
+        int externalDisplayId = -1;
+        for (Display display : displays) {
+              if (display.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+                 externalDisplayId = display.getDisplayId();
+              }
+         }
+        Slog.v(TAG, "getSecondExternalDisplayId is: " + externalDisplayId);
+         return externalDisplayId;
+    }
+
+    public ActivityStack getSecondExternalDisplayStack(){
+        ActivityDisplay activityDisplay = mActivityDisplays.get(getSecondExternalDisplayId());
+        if (activityDisplay != null) {
+            ArrayList<ActivityStack> stacks = activityDisplay.mStacks;
+            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                return stacks.get(stackNdx);
+            }
+        }
+        return null;
     }
 
     void moveHomeStackToFront(String reason) {
@@ -1061,14 +1134,18 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
     boolean pauseBackStacks(boolean userLeaving, ActivityRecord resuming, boolean dontWait) {
         boolean someActivityPaused = false;
         for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
-            ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
-            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
-                final ActivityStack stack = stacks.get(stackNdx);
-                if (!isFocusedStack(stack) && stack.mResumedActivity != null) {
-                    if (DEBUG_STATES) Slog.d(TAG_STATES, "pauseBackStacks: stack=" + stack +
-                            " mResumedActivity=" + stack.mResumedActivity);
-                    someActivityPaused |= stack.startPausingLocked(userLeaving, false, resuming,
-                            dontWait);
+            //pause activities of the display, on which Current Activity is resuming.
+            // Dont pause the activities which are on other displays.
+            if (resuming.info != null && resuming.info.displayId == displayNdx) {
+                ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+                for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                    final ActivityStack stack = stacks.get(stackNdx);
+                    if (!isFocusedStack(stack) && stack.mResumedActivity != null) {
+                        if (DEBUG_STATES) Slog.d(TAG_STATES, "pauseBackStacks: stack=" + stack +
+                                " mResumedActivity=" + stack.mResumedActivity);
+                        someActivityPaused |= stack.startPausingLocked(userLeaving, false, resuming,
+                                dontWait);
+                        }
                 }
             }
         }
@@ -2252,13 +2329,14 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
 
         // If there is no valid stack on the external display - check if new dynamic stack will do.
         if (displayId != Display.DEFAULT_DISPLAY) {
-            final int newDynamicStackId = getNextStackId();
-            if (mService.mActivityStarter.isValidLaunchStackId(newDynamicStackId, displayId, r)) {
-                return createStackOnDisplay(newDynamicStackId, displayId, true /*onTop*/);
+            final int externalDisplayId = getExternalDisplayId();
+            int stackId = getNextStackId();
+            if (mService.mActivityStarter.isValidLaunchStackId(stackId, externalDisplayId, r)) {
+                return createStackOnDisplay(stackId, externalDisplayId, true);
             }
         }
 
-        Slog.w(TAG, "getValidLaunchStackOnDisplay: can't launch on displayId " + displayId);
+        Slog.v(TAG, "getValidLaunchStackOnDisplay: can't launch on displayId " + displayId);
         return null;
     }
 
@@ -4836,9 +4914,13 @@ public class ActivityStackSupervisor extends ConfigurationContainer implements D
                 mService.mActivityStarter.sendPowerHintForLaunchStartIfNeeded(true /* forceSend */,
                         targetActivity);
                 mActivityMetricsLogger.notifyActivityLaunching();
-                mService.moveTaskToFrontLocked(task.taskId, 0, bOptions, true /* fromRecents */);
-                mActivityMetricsLogger.notifyActivityLaunched(ActivityManager.START_TASK_TO_FRONT,
-                        targetActivity);
+                try {
+                    mService.moveTaskToFrontLocked(task.taskId, 0, bOptions,
+                            true /* fromRecents */);
+                } finally {
+                    mActivityMetricsLogger.notifyActivityLaunched(START_TASK_TO_FRONT,
+                            targetActivity);
+                }
 
                 // If we are launching the task in the docked stack, put it into resizing mode so
                 // the window renders full-screen with the background filling the void. Also only

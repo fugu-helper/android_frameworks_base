@@ -120,6 +120,12 @@ public:
      * Layer 0 is the overlay layer, > 0 appear above this layer. */
     virtual void setLayer(int32_t layer) = 0;
 
+#ifdef TRIPLE_DISP
+    /* Sets the sprite layerstack  */
+    /* Tell SurfaceFlinger draw it on which display.*/
+    virtual void setLayerStack(int32_t layerstack) = 0;
+#endif
+
     /* Sets the sprite alpha blend ratio between 0.0 and 1.0. */
     virtual void setAlpha(float alpha) = 0;
 
@@ -169,6 +175,9 @@ private:
         DIRTY_TRANSFORMATION_MATRIX = 1 << 3,
         DIRTY_LAYER = 1 << 4,
         DIRTY_VISIBILITY = 1 << 5,
+#ifdef TRIPLE_DISP
+        DIRTY_LAYERSTACK = 1 << 7,
+#endif
         DIRTY_HOTSPOT = 1 << 6,
     };
 
@@ -180,7 +189,11 @@ private:
     struct SpriteState {
         inline SpriteState() :
                 dirty(0), visible(false),
+#ifndef TRIPLE_DISP
                 positionX(0), positionY(0), layer(0), alpha(1.0f),
+#else
+                positionX(0), positionY(0), layer(0), alpha(1.0f),layerStack(-1),
+#endif
                 surfaceWidth(0), surfaceHeight(0), surfaceDrawn(false), surfaceVisible(false) {
         }
 
@@ -192,6 +205,9 @@ private:
         float positionY;
         int32_t layer;
         float alpha;
+#ifdef  TRIPLE_DISP
+        int32_t layerStack;
+#endif
         SpriteTransformationMatrix transformationMatrix;
 
         sp<SurfaceControl> surfaceControl;
@@ -225,6 +241,9 @@ private:
         virtual void setLayer(int32_t layer);
         virtual void setAlpha(float alpha);
         virtual void setTransformationMatrix(const SpriteTransformationMatrix& matrix);
+#ifdef  TRIPLE_DISP
+        virtual void setLayerStack(int32_t layerstack);
+#endif
 
         inline const SpriteState& getStateLocked() const {
             return mLocked.state;

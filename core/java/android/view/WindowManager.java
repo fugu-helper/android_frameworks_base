@@ -353,7 +353,11 @@ public interface WindowManager extends ViewManager {
                 @ViewDebug.IntToString(from = TYPE_SCREENSHOT,
                         to = "TYPE_SCREENSHOT"),
                 @ViewDebug.IntToString(from = TYPE_APPLICATION_OVERLAY,
-                        to = "TYPE_APPLICATION_OVERLAY")
+                        to = "TYPE_APPLICATION_OVERLAY"),
+                @ViewDebug.IntToString(from = TYPE_NAVIGATION_BAR_EX,
+                        to = "TYPE_NAVIGATION_BAR_EX"),
+                @ViewDebug.IntToString(from = TYPE_NAVIGATION_BAR_SECOND_EX,
+                        to = "TYPE_NAVIGATION_BAR_SECOND_EX")
         })
         public int type;
 
@@ -749,6 +753,17 @@ public interface WindowManager extends ViewManager {
          */
         public static final int TYPE_APPLICATION_OVERLAY = FIRST_SYSTEM_WINDOW + 38;
 
+        /**
+         * Window type: External Navigation Bar (shown on external display)
+         * @hide
+         */
+        public static final int TYPE_NAVIGATION_BAR_EX = FIRST_SYSTEM_WINDOW + 39;
+
+        /**
+         * Window type: Second External Navigation Bar (shown on Second external display)
+         * @hide
+         */
+        public static final int TYPE_NAVIGATION_BAR_SECOND_EX = FIRST_SYSTEM_WINDOW + 40;
         /**
          * End of types of system windows.
          */

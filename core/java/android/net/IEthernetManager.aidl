@@ -17,6 +17,8 @@
 package android.net;
 
 import android.net.IpConfiguration;
+import android.net.LinkProperties;
+import android.net.NetworkInfo;
 import android.net.IEthernetServiceListener;
 
 /**
@@ -31,4 +33,24 @@ interface IEthernetManager
     boolean isAvailable();
     void addListener(in IEthernetServiceListener listener);
     void removeListener(in IEthernetServiceListener listener);
+
+    /* Dual Internet Changes start */
+    void reconnect();
+    void teardown();
+
+    LinkProperties getEthernetLinkProperties();
+    NetworkInfo getEthernetNetworkInfo();
+
+    boolean isPluggedInEthAvailable();
+    void addPluggedinEthListener(in IEthernetServiceListener listener);
+    void removePluggedinEthListener(in IEthernetServiceListener listener);
+    void connectPluggedinEth();
+    void teardownPluggedinEth();
+
+    LinkProperties getPluggedinLinkProperties();
+    NetworkInfo getPluggedinNetworkInfo();
+
+    IpConfiguration getPluggedInEthernetConfiguration();
+    void setPluggedInEthernetConfiguration(in IpConfiguration config);
+    /* Dual Internet Changes end */
 }

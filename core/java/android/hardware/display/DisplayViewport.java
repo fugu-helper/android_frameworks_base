@@ -36,6 +36,9 @@ public final class DisplayViewport {
     // The logical display id.
     public int displayId;
 
+    // The layer stack of this display
+    public int layerStack;
+
     // The rotation applied to the physical coordinate system.
     public int orientation;
 
@@ -64,6 +67,7 @@ public final class DisplayViewport {
         physicalFrame.set(viewport.physicalFrame);
         deviceWidth = viewport.deviceWidth;
         deviceHeight = viewport.deviceHeight;
+        layerStack = viewport.layerStack;
         uniqueId = viewport.uniqueId;
     }
 

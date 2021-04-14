@@ -145,6 +145,12 @@ public abstract class DisplayManagerInternal {
     public abstract void setDisplayProperties(int displayId, boolean hasContent,
             float requestedRefreshRate, int requestedModeId, boolean inTraversal);
 
+    public abstract void setExternalDisplayInfoOverrideFromWindowManager(
+            int displayId, DisplayInfo info);
+
+    public abstract void setSecondExternalDisplayInfoOverrideFromWindowManager(
+            int displayId, DisplayInfo info);
+
     /**
      * Applies an offset to the contents of a display, for example to avoid burn-in.
      * <p>

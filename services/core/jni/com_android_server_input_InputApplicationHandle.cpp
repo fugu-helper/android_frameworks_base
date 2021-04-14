@@ -29,6 +29,9 @@ static struct {
     jfieldID ptr;
     jfieldID name;
     jfieldID dispatchingTimeoutNanos;
+#ifdef TRIPLE_DISP
+    jfieldID displayId;
+#endif
 } gInputApplicationHandleClassInfo;
 
 static Mutex gHandleMutex;
@@ -74,6 +77,9 @@ bool NativeInputApplicationHandle::updateInfo() {
 
     mInfo->dispatchingTimeout = env->GetLongField(obj,
             gInputApplicationHandleClassInfo.dispatchingTimeoutNanos);
+#ifdef TRIPLE_DISP
+    mInfo->displayId = env->GetIntField(obj,gInputApplicationHandleClassInfo.displayId);
+#endif
 
     env->DeleteLocalRef(obj);
     return true;
@@ -152,7 +158,11 @@ int register_android_server_InputApplicationHandle(JNIEnv* env) {
     GET_FIELD_ID(gInputApplicationHandleClassInfo.dispatchingTimeoutNanos,
             clazz,
             "dispatchingTimeoutNanos", "J");
-
+#ifdef TRIPLE_DISP
+    GET_FIELD_ID(gInputApplicationHandleClassInfo.displayId,
+            clazz,
+            "displayId", "I");
+#endif
     return 0;
 }
 

@@ -96,7 +96,19 @@ PointerController::PointerController(const sp<PointerControllerPolicyInterface>&
     mLocked.displayWidth = -1;
     mLocked.displayHeight = -1;
     mLocked.displayOrientation = DISPLAY_ORIENTATION_0;
+#ifdef TRIPLE_DISP
+    mLocked.secondDisplayWidth = -1;
+    mLocked.secondDisplayHeight = -1;
+    mLocked.secondDisplayOrientation = DISPLAY_ORIENTATION_0;
+    mLocked.focusDisplayId = ADISPLAY_ID_DEFAULT;
+    mLocked.secondDisplayId = -1;
 
+    mLocked.thirdDisplayWidth = -1;
+    mLocked.thirdDisplayHeight = -1;
+    mLocked.thirdDisplayOrientation = DISPLAY_ORIENTATION_0;
+    mLocked.thirdDisplayId = -1;
+
+#endif
     mLocked.presentation = PRESENTATION_POINTER;
     mLocked.presentationChanged = false;
 
@@ -157,12 +169,47 @@ bool PointerController::getBoundsLocked(float* outMinX, float* outMinY,
     switch (mLocked.displayOrientation) {
     case DISPLAY_ORIENTATION_90:
     case DISPLAY_ORIENTATION_270:
+#ifdef TRIPLE_DISP
+        if (mLocked.focusDisplayId != ADISPLAY_ID_DEFAULT) {
+            if ( mLocked.focusDisplayId == mLocked.secondDisplayId) {
+                ALOGV("Focus on Second DisplayId\n");
+                *outMaxX = mLocked.secondDisplayWidth -1;
+                *outMaxY = mLocked.secondDisplayHeight -1;
+            } else if (mLocked.focusDisplayId == mLocked.thirdDisplayId) {
+                ALOGV("Focus on Third Display Id\n");
+                *outMaxX = mLocked.thirdDisplayWidth -1;
+                *outMaxY = mLocked.thirdDisplayHeight -1;
+            }
+        } else {
+            *outMaxX =  mLocked.displayHeight - 1;
+            *outMaxY =  mLocked.displayWidth - 1;
+        }
+#else
         *outMaxX = mLocked.displayHeight - 1;
         *outMaxY = mLocked.displayWidth - 1;
+#endif
         break;
     default:
+#ifdef TRIPLE_DISP
+        if (mLocked.focusDisplayId != ADISPLAY_ID_DEFAULT) {
+            if ( mLocked.focusDisplayId == mLocked.secondDisplayId) {
+                ALOGV("Focus on default Orientation Second DisplayId");
+                *outMaxX = mLocked.secondDisplayWidth -1;
+                *outMaxY = mLocked.secondDisplayHeight -1;
+            } else if (mLocked.focusDisplayId == mLocked.thirdDisplayId) {
+                ALOGV("Focus on default Orienattion Third Display Id");
+                *outMaxX = mLocked.thirdDisplayWidth -1;
+                *outMaxY = mLocked.thirdDisplayHeight -1;
+            }
+        } else {
+            *outMaxX = mLocked.displayWidth - 1;
+            *outMaxY = mLocked.displayHeight - 1;
+        }
+#else
         *outMaxX = mLocked.displayWidth - 1;
         *outMaxY = mLocked.displayHeight - 1;
+#endif
+
         break;
     }
     return true;
@@ -209,11 +256,53 @@ void PointerController::setPosition(float x, float y) {
 
 void PointerController::setPositionLocked(float x, float y) {
     float minX, minY, maxX, maxY;
+#ifdef TRIPLE_DISP
+   #if DEBUG_POINTER_UPDATES
+        ALOGD("Set pointer position to x=%0.3f, y=%0.3f", x, y);
+    #endif
+#endif
     if (getBoundsLocked(&minX, &minY, &maxX, &maxY)) {
         if (x <= minX) {
+#ifndef TRIPLE_DISP
             mLocked.pointerX = minX;
+#else
+        if (mLocked.focusDisplayId != ADISPLAY_ID_DEFAULT) {
+             if (mLocked.focusDisplayId >  mLocked.secondDisplayId) {
+                 mLocked.focusDisplayId = mLocked.secondDisplayId;
+             } else {
+                 mLocked.focusDisplayId = ADISPLAY_ID_DEFAULT;
+             }
+             #if DEBUG_POINTER_UPDATES
+                  ALOGD("Changed to Default DISPLAY");
+             #endif
+             getBoundsLocked(&minX, &minY, &maxX, &maxY);
+             mLocked.pointerX = maxX;
+           } else {
+                mLocked.pointerX = minX;
+           }
+#endif
         } else if (x >= maxX) {
+#ifndef TRIPLE_DISP
             mLocked.pointerX = maxX;
+#else
+            if (mLocked.focusDisplayId < mLocked.secondDisplayId) {
+                mLocked.focusDisplayId = mLocked.secondDisplayId;
+#if DEBUG_POINTER_UPDATES
+                ALOGD("Changed to focusDisplayId = %d", mLocked.focusDisplayId);
+#endif
+                getBoundsLocked(&minX, &minY, &maxX, &maxY);
+                mLocked.pointerX = minX;
+            } else if (mLocked.focusDisplayId < mLocked.thirdDisplayId) {
+                mLocked.focusDisplayId = mLocked.thirdDisplayId;
+#if DEBUG_POINTER_UPDATES
+                ALOGD("Changed to focusDisplayId = %d", mLocked.focusDisplayId);
+#endif
+                getBoundsLocked(&minX, &minY, &maxX, &maxY);
+                mLocked.pointerX = minX;
+            } else {
+                mLocked.pointerX = maxX;
+            }
+#endif
         } else {
             mLocked.pointerX = x;
         }
@@ -227,6 +316,16 @@ void PointerController::setPositionLocked(float x, float y) {
         updatePointerLocked();
     }
 }
+
+#ifdef TRIPLE_DISP
+int32_t PointerController::getFocusDisplayId() {
+     AutoMutex _l(mLock);
+    #if DEBUG_POINTER_UPDATES
+      ALOGD("The focusDisplayId is %d",mLocked.focusDisplayId);
+    #endif
+    return mLocked.focusDisplayId;
+}
+#endif
 
 void PointerController::getPosition(float* outX, float* outY) const {
     AutoMutex _l(mLock);
@@ -373,7 +472,55 @@ void PointerController::reloadPointerResources() {
     updatePointerLocked();
 }
 
+#ifdef TRIPLE_DISP
+void PointerController::setSecondDisplayViewport(int32_t width, int32_t height, int32_t orientation,int32_t displayid, int32_t layerstack) {
+    AutoMutex _l(mLock);
+    #if DEBUG_POINTER_UPDATES
+        ALOGD("setSecondDisplayViewport.The secondDisplayWidth is %d,secondDisplayHeight is %d,secondDisplayLayerstack is %d secondDisplayId is %d ",width,height,layerstack,displayid);
+    #endif
+    mLocked.secondDisplayWidth = width;
+    mLocked.secondDisplayHeight = height;
+    mLocked.secondDisplayOrientation = orientation;
+    mLocked.secondDisplayLayerstack = layerstack;
+    mLocked.secondDisplayId = displayid;
+    if (displayid == ADISPLAY_ID_DEFAULT) {
+        // return to clone mode again
+        if(mLocked.focusDisplayId != ADISPLAY_ID_DEFAULT) {
+            mLocked.focusDisplayId = ADISPLAY_ID_DEFAULT;
+        }
+    }
+    updatePointerLocked();
+}
+
+void PointerController::setThirdDisplayViewport(int32_t width,
+                                                int32_t height,
+                                                int32_t orientation,
+                                                int32_t layerstack,
+                                                int32_t displayid) {
+    AutoMutex _l(mLock);
+    #if DEBUG_POINTER_UPDATES
+        ALOGD("thirdDisplay Width %d, Height %d, stack %d, Id %d ",
+              width, height, layerstack, displayid);
+    #endif
+    mLocked.thirdDisplayWidth = width;
+    mLocked.thirdDisplayHeight = height;
+    mLocked.thirdDisplayOrientation = orientation;
+    mLocked.thirdDisplayLayerstack = layerstack;
+    mLocked.thirdDisplayId = displayid;
+    if (displayid == ADISPLAY_ID_DEFAULT) {
+        // return to clone mode again
+        if(mLocked.focusDisplayId != ADISPLAY_ID_DEFAULT) {
+            mLocked.focusDisplayId = ADISPLAY_ID_DEFAULT;
+        }
+    }
+    updatePointerLocked();
+}
+#endif
+#ifdef TRIPLE_DISP
+void PointerController::setDisplayViewport(int32_t width, int32_t height, int32_t orientation, int32_t layerstack) {
+#else
 void PointerController::setDisplayViewport(int32_t width, int32_t height, int32_t orientation) {
+#endif
     AutoMutex _l(mLock);
 
     // Adjust to use the display's unrotated coordinate frame.
@@ -383,7 +530,9 @@ void PointerController::setDisplayViewport(int32_t width, int32_t height, int32_
         height = width;
         width = temp;
     }
-
+#ifdef TRIPLE_DISP
+    mLocked.displayLayerstack = layerstack;
+#endif
     if (mLocked.displayWidth != width || mLocked.displayHeight != height) {
         mLocked.displayWidth = width;
         mLocked.displayHeight = height;
@@ -617,10 +766,33 @@ void PointerController::removeInactivityTimeoutLocked() {
 }
 
 void PointerController::updatePointerLocked() {
+
+#ifdef TRIPLE_DISP
+   #if DEBUG_POINTER_UPDATES
+        ALOGD("focusDisplayId %d displayLayerstack %d secDisplayLayerstack %d",
+              mLocked.focusDisplayId, mLocked.displayLayerstack,
+              mLocked.secondDisplayLayerstack);
+    #endif
+#endif
+
     mSpriteController->openTransaction();
 
     mLocked.pointerSprite->setLayer(Sprite::BASE_LAYER_POINTER);
     mLocked.pointerSprite->setPosition(mLocked.pointerX, mLocked.pointerY);
+
+#ifdef TRIPLE_DISP
+    int32_t lay = -1;
+    if (mLocked.focusDisplayId != 0) {
+        if (mLocked.focusDisplayId == mLocked.secondDisplayId) {
+            lay = mLocked.secondDisplayLayerstack;
+        } else if (mLocked.focusDisplayId == mLocked.thirdDisplayId) {
+            lay = mLocked.thirdDisplayLayerstack;
+        }
+    } else {
+        lay = mLocked.displayLayerstack;
+    }
+    mLocked.pointerSprite->setLayerStack(lay);
+#endif
 
     if (mLocked.pointerAlpha > 0) {
         mLocked.pointerSprite->setAlpha(mLocked.pointerAlpha);

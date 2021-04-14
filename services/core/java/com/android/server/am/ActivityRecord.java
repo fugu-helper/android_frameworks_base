@@ -133,6 +133,7 @@ import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.GraphicBuffer;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
@@ -152,8 +153,9 @@ import android.util.Log;
 import android.util.MergedConfiguration;
 import android.util.Slog;
 import android.util.TimeUtils;
-import android.view.AppTransitionAnimationSpec;
 import android.view.IAppTransitionAnimationSpecsFuture;
+import android.view.AppTransitionAnimationSpec;
+import android.view.Display;
 import android.view.IApplicationToken;
 import android.view.WindowManager.LayoutParams;
 
@@ -1058,6 +1060,8 @@ final class ActivityRecord extends ConfigurationContainer implements AppWindowCo
         if (launchMode != LAUNCH_SINGLE_INSTANCE && launchMode != LAUNCH_SINGLE_TASK) {
             task.setTaskToAffiliateWith(taskToAffiliateWith);
         }
+        // if the task is in second dispplay, we should on secound display also
+        info.displayId =  task.getStack().mDisplayId;
     }
 
     /**
@@ -1585,7 +1589,7 @@ final class ActivityRecord extends ConfigurationContainer implements AppWindowCo
 
     void setVisibility(boolean visible) {
         mWindowContainerController.setVisibility(visible, mDeferHidingClient);
-        mStackSupervisor.mActivityMetricsLogger.notifyVisibilityChanged(this, visible);
+        mStackSupervisor.mActivityMetricsLogger.notifyVisibilityChanged(this);
     }
 
     // TODO: Look into merging with #setVisibility()

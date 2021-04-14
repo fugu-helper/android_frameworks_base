@@ -50,7 +50,7 @@ import java.util.Arrays;
 public class PowerUI extends SystemUI {
     static final String TAG = "PowerUI";
     static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
-    private static final long TEMPERATURE_INTERVAL = 30 * DateUtils.SECOND_IN_MILLIS;
+    private static final long TEMPERATURE_INTERVAL = 6 * DateUtils.SECOND_IN_MILLIS;
     private static final long TEMPERATURE_LOGGING_INTERVAL = DateUtils.HOUR_IN_MILLIS;
     private static final int MAX_RECENT_TEMPS = 125; // TEMPERATURE_LOGGING_INTERVAL plus a buffer
 
@@ -265,7 +265,7 @@ public class PowerUI extends SystemUI {
         if (mThresholdTemp < 0f) {
             // Get the throttling temperature. No need to check if we're not throttling.
             float[] throttlingTemps = mHardwarePropertiesManager.getDeviceTemperatures(
-                    HardwarePropertiesManager.DEVICE_TEMPERATURE_SKIN,
+                    HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU,
                     HardwarePropertiesManager.TEMPERATURE_SHUTDOWN);
             if (throttlingTemps == null
                     || throttlingTemps.length == 0
@@ -297,7 +297,7 @@ public class PowerUI extends SystemUI {
     @VisibleForTesting
     protected void updateTemperatureWarning() {
         float[] temps = mHardwarePropertiesManager.getDeviceTemperatures(
-                HardwarePropertiesManager.DEVICE_TEMPERATURE_SKIN,
+                HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU,
                 HardwarePropertiesManager.TEMPERATURE_CURRENT);
         if (temps.length != 0) {
             float temp = temps[0];

@@ -95,8 +95,10 @@ import com.android.server.lights.Light;
 import com.android.server.lights.LightsManager;
 import com.android.server.power.BatterySaverPolicy.ServiceType;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import libcore.util.Objects;
 
@@ -4654,6 +4656,12 @@ public final class PowerManagerService extends SystemService
             case REASON_USERREQUESTED:
                 return PowerManager.SHUTDOWN_REASON_USER_REQUESTED;
             case REASON_THERMAL_SHUTDOWN:
+		try (FileWriter writer = new FileWriter(lastRebootReason)){
+			writer.write("reboot, ");
+			writer.close();
+		} catch (IOException e) {
+			Slog.e(TAG, "Failed to write last_reboot_reason file", e);
+		}
                 return PowerManager.SHUTDOWN_REASON_THERMAL_SHUTDOWN;
             default:
                 return PowerManager.SHUTDOWN_REASON_UNKNOWN;

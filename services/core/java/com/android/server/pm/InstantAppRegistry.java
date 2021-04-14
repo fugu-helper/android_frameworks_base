@@ -1159,7 +1159,7 @@ class InstantAppRegistry {
         // the fact that package are cached by the system so the ==
         // comparison would match and we end up with a way to cancel
         // persisting the cookie for a user and package.
-        private final SparseArray<ArrayMap<PackageParser.Package, SomeArgs>> mPendingPersistCookies
+        private final SparseArray<ArrayMap<String, SomeArgs>> mPendingPersistCookies
                 = new SparseArray<>();
 
         public CookiePersistence(Looper looper) {
@@ -1188,10 +1188,10 @@ class InstantAppRegistry {
 
         public @Nullable byte[] getPendingPersistCookieLPr(@NonNull PackageParser.Package pkg,
                 @UserIdInt int userId) {
-            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+            ArrayMap<String, SomeArgs> pendingWorkForUser =
                     mPendingPersistCookies.get(userId);
             if (pendingWorkForUser != null) {
-                SomeArgs state = pendingWorkForUser.get(pkg);
+                SomeArgs state = pendingWorkForUser.get(pkg.packageName);
                 if (state != null) {
                     return (byte[]) state.arg1;
                 }
@@ -1211,7 +1211,7 @@ class InstantAppRegistry {
         private void addPendingPersistCookieLPw(@UserIdInt int userId,
                 @NonNull PackageParser.Package pkg, @NonNull byte[] cookie,
                 @NonNull File cookieFile) {
-            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+            ArrayMap<String, SomeArgs> pendingWorkForUser =
                     mPendingPersistCookies.get(userId);
             if (pendingWorkForUser == null) {
                 pendingWorkForUser = new ArrayMap<>();
@@ -1220,16 +1220,16 @@ class InstantAppRegistry {
             SomeArgs args = SomeArgs.obtain();
             args.arg1 = cookie;
             args.arg2 = cookieFile;
-            pendingWorkForUser.put(pkg, args);
+            pendingWorkForUser.put(pkg.packageName, args);
         }
 
         private SomeArgs removePendingPersistCookieLPr(@NonNull PackageParser.Package pkg,
                 @UserIdInt int userId) {
-            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+            ArrayMap<String, SomeArgs> pendingWorkForUser =
                     mPendingPersistCookies.get(userId);
             SomeArgs state = null;
             if (pendingWorkForUser != null) {
-                state = pendingWorkForUser.remove(pkg);
+                state = pendingWorkForUser.remove(pkg.packageName);
                 if (pendingWorkForUser.isEmpty()) {
                     mPendingPersistCookies.remove(userId);
                 }

@@ -37,12 +37,22 @@ public class ReceiverActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(getIntent().getAction())) {
-            final UsbDevice device = getIntent().getParcelableExtra(UsbManager.EXTRA_DEVICE);
+        final String actionInten =  getIntent().getAction();
+        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(actionInten) || MtpDocumentsProvider.ACTION_OPEN_DP_FROM_NTF.equals(actionInten)) {
             try {
+                int deviceId;
                 final MtpDocumentsProvider provider = MtpDocumentsProvider.getInstance();
-                provider.openDevice(device.getDeviceId());
-                final String deviceRootId = provider.getDeviceDocumentId(device.getDeviceId());
+                if(UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(actionInten))
+                {
+                    final UsbDevice device = getIntent().getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                    deviceId =  device.getDeviceId();
+                    provider.openDevice(deviceId);
+                }
+                else
+                {
+                    deviceId =  getIntent().getIntExtra(MtpDocumentsProvider.EXTRA_USB_DEVICE_ID, 0);
+                }
+                final String deviceRootId = provider.getDeviceDocumentId(deviceId);
                 final Uri uri = DocumentsContract.buildRootUri(
                         MtpDocumentsProvider.AUTHORITY, deviceRootId);
 

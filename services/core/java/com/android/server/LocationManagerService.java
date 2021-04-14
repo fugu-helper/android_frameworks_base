@@ -590,8 +590,8 @@ public class LocationManagerService extends ILocationManager.Stub {
         addProviderLocked(passiveProvider);
         mEnabledProviders.add(passiveProvider.getName());
         mPassiveProvider = passiveProvider;
-
-        if (GnssLocationProvider.isSupported()) {
+        /*Enable USB_GPS: PL2303 APP Needs GPS enabled from Framework , hence faking it by commenting below if check and allowed GPS provider interfaces to be added*/
+        //if (GnssLocationProvider.isSupported()) {
             // Create a gps location provider
             GnssLocationProvider gnssProvider = new GnssLocationProvider(mContext, this,
                     mLocationHandler.getLooper());
@@ -605,7 +605,7 @@ public class LocationManagerService extends ILocationManager.Stub {
             mGnssMeasurementsProvider = gnssProvider.getGnssMeasurementsProvider();
             mGnssNavigationMessageProvider = gnssProvider.getGnssNavigationMessageProvider();
             mGpsGeofenceProxy = gnssProvider.getGpsGeofenceProxy();
-        }
+        //}
 
         /*
         Load package name(s) containing location provider support.

@@ -102,6 +102,9 @@ public final class InputWindowHandle {
         this.windowState = windowState;
         this.clientWindow = clientWindow;
         this.displayId = displayId;
+        if (inputApplicationHandle!= null && inputApplicationHandle.displayId == -1) {
+            inputApplicationHandle.displayId = this.displayId;
+        }
     }
 
     @Override

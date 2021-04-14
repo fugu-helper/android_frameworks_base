@@ -149,6 +149,9 @@ class AppWindowToken extends WindowToken implements WindowManagerService.AppFree
     // Set to true when the token has been removed from the window mgr.
     boolean removed;
 
+    // Which display the app show on
+    int displayId;
+
     // Information about an application starting window if displayed.
     StartingData startingData;
     WindowState startingWindow;
@@ -609,6 +612,20 @@ class AppWindowToken extends WindowToken implements WindowManagerService.AppFree
             mService.mFocusedApp = null;
             mService.updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
             mService.mInputMonitor.setFocusedAppLw(null);
+        }
+
+        if (mService.mFocusedAppOnExternal == this) {
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Removing external focused app token:" + this);
+            mService.mFocusedAppOnExternal = null;
+            mService.updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
+            mService.mInputMonitor.setFocusedAppOnExternalLw(null);
+        }
+
+        if (mService.mFocusedAppOnSecondExternal == this) {
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Removing second external focused app token:" + this);
+            mService.mFocusedAppOnSecondExternal = null;
+            mService.updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
+            mService.mInputMonitor.setFocusedAppOnSecondExternalLw(null);
         }
 
         if (!delayed) {

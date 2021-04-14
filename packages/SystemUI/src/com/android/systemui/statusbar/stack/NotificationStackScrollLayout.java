@@ -3689,7 +3689,9 @@ public class NotificationStackScrollLayout extends ViewGroup
         Context context = new ContextThemeWrapper(mContext,
                 lightTheme ? R.style.Theme_SystemUI_Light : R.style.Theme_SystemUI);
         final int textColor = Utils.getColorAttr(context, R.attr.wallpaperTextColor);
-        mDismissView.setTextColor(textColor);
+        if (mDismissView != null) {
+            mDismissView.setTextColor(textColor);
+        }
         mEmptyShadeView.setTextColor(textColor);
     }
 

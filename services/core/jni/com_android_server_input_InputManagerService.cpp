@@ -97,6 +97,9 @@ static struct {
     jmethodID getKeyboardLayoutOverlay;
     jmethodID getDeviceAlias;
     jmethodID getTouchCalibrationForInputDevice;
+#ifdef TRIPLE_DISP
+    jmethodID updateFocusDisplay;
+#endif
 } gServiceClassInfo;
 
 static struct {
@@ -209,6 +212,10 @@ public:
 
     void setInputWindows(JNIEnv* env, jobjectArray windowHandleObjArray);
     void setFocusedApplication(JNIEnv* env, jobject applicationHandleObj);
+#ifdef TRIPLE_DISP
+    void setFocusedApplicationOnExternal(JNIEnv* env, jobject applicationHandleObj);
+    void setFocusedApplicationOnSecondExternal(JNIEnv* env, jobject applicationHandleObj);
+#endif
     void setInputDispatchMode(bool enabled, bool frozen);
     void setSystemUiVisibility(int32_t visibility);
     void setPointerSpeed(int32_t speed);
@@ -254,6 +261,9 @@ public:
     virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType);
     virtual bool checkInjectEventsPermissionNonReentrant(
             int32_t injectorPid, int32_t injectorUid);
+#ifdef TRIPLE_DISP
+    virtual void updateFocusDisplay(int displayId);
+#endif
 
     /* --- PointerControllerPolicyInterface implementation --- */
 
@@ -276,6 +286,7 @@ private:
         // Display size information.
         DisplayViewport internalViewport;
         DisplayViewport externalViewport;
+        DisplayViewport secondExternalViewport;
         Vector<DisplayViewport> virtualViewports;
 
         // System UI visibility.
@@ -421,6 +432,8 @@ void NativeInputManager::setDisplayViewport(int32_t type, const DisplayViewport&
             v = &mLocked.externalViewport;
         } else if (viewportType == ViewportType::VIEWPORT_INTERNAL) {
             v = &mLocked.internalViewport;
+        } else if (viewportType == ViewportType::VIEWPORT_SECOND_EXTERNAL){
+           v = &mLocked.secondExternalViewport;
         }
 
         if (v != NULL && *v != viewport) {
@@ -433,12 +446,35 @@ void NativeInputManager::setDisplayViewport(int32_t type, const DisplayViewport&
                     controller->setDisplayViewport(
                             viewport.logicalRight - viewport.logicalLeft,
                             viewport.logicalBottom - viewport.logicalTop,
+#ifndef TRIPLE_DISP
                             viewport.orientation);
+#else
+                            viewport.orientation,viewport.deviceLayerstack);
+#endif
                 }
             }
+#ifdef TRIPLE_DISP
+            else if (viewportType == ViewportType::VIEWPORT_EXTERNAL) {
+                sp<PointerController> controller = mLocked.pointerController.promote();
+                if (controller != NULL) {
+                    controller->setSecondDisplayViewport(
+                            viewport.logicalRight - viewport.logicalLeft,
+                            viewport.logicalBottom - viewport.logicalTop,
+                             viewport.orientation,viewport.displayId,viewport.deviceLayerstack);
+                }
+            }
+            else if (viewportType == ViewportType::VIEWPORT_SECOND_EXTERNAL) {
+                sp<PointerController> controller = mLocked.pointerController.promote();
+                if (controller != NULL) {
+                    controller->setThirdDisplayViewport(
+                            viewport.logicalRight - viewport.logicalLeft,
+                            viewport.logicalBottom - viewport.logicalTop,
+                             viewport.orientation,viewport.displayId,viewport.deviceLayerstack);
+                }
+            }
+#endif
         }
     }
-
     if (changed) {
         mInputManager->getReader()->requestRefreshConfiguration(
                 InputReaderConfiguration::CHANGE_DISPLAY_INFO);
@@ -548,12 +584,44 @@ sp<PointerControllerInterface> NativeInputManager::obtainPointerController(int32
         controller->setDisplayViewport(
                 v.logicalRight - v.logicalLeft,
                 v.logicalBottom - v.logicalTop,
+#ifndef TRIPLE_DISP
                 v.orientation);
+#else
+                v.orientation,v.deviceLayerstack);
+#endif
 
+#ifdef TRIPLE_DISP
+    DisplayViewport& v1 = mLocked.externalViewport;
+         controller->setSecondDisplayViewport(
+                v1.logicalRight - v1.logicalLeft,
+                v1.logicalBottom - v1.logicalTop,
+                v1.orientation, v1.deviceLayerstack,v1.displayId);
+
+                DisplayViewport& v2 = mLocked.secondExternalViewport;
+                controller->setThirdDisplayViewport(
+                            v2.logicalRight - v2.logicalLeft,
+                            v2.logicalBottom - v2.logicalTop,
+                            v2.orientation, v2.deviceLayerstack,v2.displayId);
+
+#endif
         updateInactivityTimeoutLocked(controller);
     }
     return controller;
 }
+
+#ifdef TRIPLE_DISP
+void NativeInputManager::setFocusedApplicationOnExternal(JNIEnv* env, jobject applicationHandleObj) {
+    sp<InputApplicationHandle> applicationHandle =
+            android_server_InputApplicationHandle_getHandle(env, applicationHandleObj);
+    mInputManager->getDispatcher()->setFocusedApplicationOnExternal(applicationHandle);
+}
+
+void NativeInputManager::setFocusedApplicationOnSecondExternal(JNIEnv* env, jobject applicationHandleObj) {
+    sp<InputApplicationHandle> applicationHandle =
+            android_server_InputApplicationHandle_getHandle(env, applicationHandleObj);
+    mInputManager->getDispatcher()->setFocusedApplicationOnSecondExternal(applicationHandle);
+}
+#endif
 
 void NativeInputManager::ensureSpriteControllerLocked() {
     if (mLocked.spriteController == NULL) {
@@ -791,6 +859,13 @@ void NativeInputManager::setFocusedApplication(JNIEnv* env, jobject applicationH
 void NativeInputManager::setInputDispatchMode(bool enabled, bool frozen) {
     mInputManager->getDispatcher()->setInputDispatchMode(enabled, frozen);
 }
+#ifdef TRIPLE_DISP
+void NativeInputManager::updateFocusDisplay(int displayId) {
+     JNIEnv* env = jniEnv();
+     env->CallVoidMethod(mServiceObj, gServiceClassInfo.updateFocusDisplay,displayId);
+    checkAndClearExceptionFromCallback(env, "updateFocusDisplay");
+}
+#endif
 
 void NativeInputManager::setSystemUiVisibility(int32_t visibility) {
     AutoMutex _l(mLock);
@@ -1261,7 +1336,11 @@ static void nativeSetDisplayViewport(JNIEnv* env, jclass /* clazz */, jlong ptr,
         jint viewportType, jint displayId, jint orientation,
         jint logicalLeft, jint logicalTop, jint logicalRight, jint logicalBottom,
         jint physicalLeft, jint physicalTop, jint physicalRight, jint physicalBottom,
+#ifndef TRIPLE_DISP
         jint deviceWidth, jint deviceHeight, jstring uniqueId) {
+#else
+        jint deviceWidth, jint deviceHeight,jint deviceLayerstack, jstring uniqueId) {
+#endif
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
 
     DisplayViewport v;
@@ -1277,6 +1356,10 @@ static void nativeSetDisplayViewport(JNIEnv* env, jclass /* clazz */, jlong ptr,
     v.physicalBottom = physicalBottom;
     v.deviceWidth = deviceWidth;
     v.deviceHeight = deviceHeight;
+#ifdef TRIPLE_DISP
+    v.deviceLayerstack = deviceLayerstack;
+#endif
+
     if (uniqueId != nullptr) {
         v.uniqueId.setTo(ScopedUtfChars(env, uniqueId).c_str());
     }
@@ -1455,6 +1538,21 @@ static void nativeSetFocusedApplication(JNIEnv* env, jclass /* clazz */,
 
     im->setFocusedApplication(env, applicationHandleObj);
 }
+#ifdef TRIPLE_DISP
+static void nativeSetFocusedApplicationOnExternal(JNIEnv* env, jclass clazz,
+        jlong ptr, jobject applicationHandleObj) {
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+
+    im->setFocusedApplicationOnExternal(env, applicationHandleObj);
+}
+
+static void nativeSetFocusedApplicationOnSecondExternal(JNIEnv* env, jclass clazz,
+        jlong ptr, jobject applicationHandleObj) {
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+
+    im->setFocusedApplicationOnSecondExternal(env, applicationHandleObj);
+}
+#endif
 
 static void nativeSetPointerCapture(JNIEnv* env, jclass /* clazz */, jlong ptr,
         jboolean enabled) {
@@ -1654,7 +1752,11 @@ static const JNINativeMethod gInputManagerMethods[] = {
             (void*) nativeStart },
     { "nativeSetVirtualDisplayViewports", "(J[Landroid/hardware/display/DisplayViewport;)V",
             (void*) nativeSetVirtualDisplayViewports },
+#ifndef TRIPLE_DISP
     { "nativeSetDisplayViewport", "(JIIIIIIIIIIIIILjava/lang/String;)V",
+#else
+    { "nativeSetDisplayViewport", "(JIIIIIIIIIIIIIILjava/lang/String;)V",
+#endif
             (void*) nativeSetDisplayViewport },
     { "nativeGetScanCodeState", "(JIII)I",
             (void*) nativeGetScanCodeState },
@@ -1679,6 +1781,12 @@ static const JNINativeMethod gInputManagerMethods[] = {
             (void*) nativeSetInputWindows },
     { "nativeSetFocusedApplication", "(JLcom/android/server/input/InputApplicationHandle;)V",
             (void*) nativeSetFocusedApplication },
+#ifdef TRIPLE_DISP
+    { "nativeSetFocusedApplicationOnExternal", "(JLcom/android/server/input/InputApplicationHandle;)V",
+            (void*) nativeSetFocusedApplicationOnExternal },
+    { "nativeSetFocusedApplicationOnSecondExternal", "(JLcom/android/server/input/InputApplicationHandle;)V",
+            (void*) nativeSetFocusedApplicationOnSecondExternal },
+#endif
     { "nativeSetPointerCapture", "(JZ)V",
             (void*) nativeSetPointerCapture },
     { "nativeSetInputDispatchMode", "(JZZ)V",
@@ -1850,6 +1958,9 @@ int register_android_server_InputManager(JNIEnv* env) {
 
     GET_METHOD_ID(gTouchCalibrationClassInfo.getAffineTransform, gTouchCalibrationClassInfo.clazz,
             "getAffineTransform", "()[F");
+#ifdef TRIPLE_DISP
+    GET_METHOD_ID(gServiceClassInfo.updateFocusDisplay, clazz, "updateFocusDisplay","(I)V");
+#endif
 
     return 0;
 }

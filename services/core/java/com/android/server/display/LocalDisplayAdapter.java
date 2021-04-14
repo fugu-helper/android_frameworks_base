@@ -20,6 +20,7 @@ import android.content.res.Resources;
 import com.android.server.LocalServices;
 import com.android.server.lights.Light;
 import com.android.server.lights.LightsManager;
+import com.intel.config.FeatureConfig;
 
 import android.content.Context;
 import android.os.Build;
@@ -59,6 +60,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
     private static final int[] BUILT_IN_DISPLAY_IDS_TO_SCAN = new int[] {
             SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN,
             SurfaceControl.BUILT_IN_DISPLAY_ID_HDMI,
+            SurfaceControl.BUILT_IN_DISPLAY_ID_DP,
     };
 
     private final SparseArray<LocalDisplayDevice> mDevices =
@@ -75,7 +77,6 @@ final class LocalDisplayAdapter extends DisplayAdapter {
     @Override
     public void registerLocked() {
         super.registerLocked();
-
         mHotplugReceiver = new HotplugDisplayEventReceiver(getHandler().getLooper());
 
         for (int builtInDisplayId : BUILT_IN_DISPLAY_IDS_TO_SCAN) {
@@ -400,7 +401,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     mInfo.xDpi = phys.xDpi;
                     mInfo.yDpi = phys.yDpi;
                     mInfo.touch = DisplayDeviceInfo.TOUCH_INTERNAL;
-                } else {
+                } else if (mBuiltInDisplayId == SurfaceControl.BUILT_IN_DISPLAY_ID_HDMI) {
                     mInfo.type = Display.TYPE_HDMI;
                     mInfo.flags |= DisplayDeviceInfo.FLAG_PRESENTATION;
                     mInfo.name = getContext().getResources().getString(
@@ -409,7 +410,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     mInfo.setAssumedDensityForExternalDisplay(phys.width, phys.height);
 
                     // For demonstration purposes, allow rotation of the external display.
-                    // In the future we might allow the user to configure this directly.
+                    // In te future we might allow the user to configure this directly.
                     if ("portrait".equals(SystemProperties.get("persist.demo.hdmirotation"))) {
                         mInfo.rotation = Surface.ROTATION_270;
                     }
@@ -424,6 +425,23 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                                 com.android.internal.R.bool.config_localDisplaysMirrorContent)) {
                         mInfo.flags |= DisplayDeviceInfo.FLAG_OWN_CONTENT_ONLY;
                     }
+                } else if (mBuiltInDisplayId == SurfaceControl.BUILT_IN_DISPLAY_ID_DP) {
+                    mInfo.type = Display.TYPE_DP;
+                    mInfo.flags |= DisplayDeviceInfo.FLAG_PRESENTATION;
+                    mInfo.name = "DP Screen";
+                    mInfo.touch = DisplayDeviceInfo.TOUCH_SECOND_EXTERNAL;
+                    mInfo.setAssumedDensityForExternalDisplay(phys.width, phys.height);
+                    // For demonstration purposes, allow rotation of the external display.
+                    // In the future we might allow the user to configure this directly.
+                    if ("portrait".equals(SystemProperties.get("persist.demo.hdmirotation"))) {
+                        mInfo.rotation = Surface.ROTATION_270;
+                    }
+
+                    // For demonstration purposes, allow rotation of the external display
+                    // to follow the built-in display.
+                    if (SystemProperties.getBoolean("persist.demo.hdmirotates", false)) {
+	                    mInfo.flags |= DisplayDeviceInfo.FLAG_ROTATES_WITH_CONTENT;
+	            }
                 }
             }
             return mInfo;

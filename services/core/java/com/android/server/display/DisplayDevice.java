@@ -221,6 +221,7 @@ abstract class DisplayDevice {
         DisplayDeviceInfo info = getDisplayDeviceInfoLocked();
         viewport.deviceWidth = isRotated ? info.height : info.width;
         viewport.deviceHeight = isRotated ? info.width : info.height;
+        viewport.layerStack = mCurrentLayerStack;
     }
 
     /**

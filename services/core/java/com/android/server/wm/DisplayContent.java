@@ -20,6 +20,9 @@ import static android.app.ActivityManager.StackId.DOCKED_STACK_ID;
 import static android.app.ActivityManager.StackId.FREEFORM_WORKSPACE_STACK_ID;
 import static android.app.ActivityManager.StackId.HOME_STACK_ID;
 import static android.app.ActivityManager.StackId.PINNED_STACK_ID;
+import static android.app.AppOpsManager.MODE_ALLOWED;
+import static android.app.AppOpsManager.MODE_DEFAULT;
+import static android.app.AppOpsManager.OP_NONE;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_BEHIND;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSET;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
@@ -101,6 +104,7 @@ import static com.android.server.wm.WindowSurfacePlacer.SET_WALLPAPER_MAY_CHANGE
 
 import android.annotation.NonNull;
 import android.app.ActivityManager.StackId;
+import android.content.pm.ActivityInfo;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -116,6 +120,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.MutableBoolean;
 import android.util.Slog;
@@ -124,6 +129,7 @@ import android.view.DisplayInfo;
 import android.view.InputDevice;
 import android.view.Surface;
 import android.view.SurfaceControl;
+import android.view.WindowManager;
 import android.view.WindowManagerPolicy;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -218,6 +224,8 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
      */
     private final DisplayMetrics mCompatDisplayMetrics = new DisplayMetrics();
 
+    final DisplayMetrics mExternalDisplayMetrics = new DisplayMetrics();
+
     /** The desired scaling factor for compatible apps. */
     float mCompatibleScreenScale;
 
@@ -229,6 +237,22 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
      */
     private int mRotation = 0;
 
+   /**
+     * Current rotation of the External display.
+     * Constants as per {@link android.view.Surface.Rotation}.
+     *
+     * @see #updateRotationUnchecked(boolean)
+    */
+    private int mExtRotation = 0;
+
+     /**
+     * Current rotation of the Second External display.
+     * Constants as per {@link android.view.Surface.Rotation}.
+     *
+     * @see #updateRotationUnchecked(boolean)
+    */
+    private int mSecondExtRotation = 0;
+
     /**
      * Last applied orientation of the display.
      * Constants as per {@link android.content.pm.ActivityInfo.ScreenOrientation}.
@@ -236,6 +260,22 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
      * @see WindowManagerService#updateOrientationFromAppTokensLocked(boolean, int)
      */
     private int mLastOrientation = SCREEN_ORIENTATION_UNSPECIFIED;
+
+    /**
+     * Last applied orientation of the external display.
+     * Constants as per {@link android.content.pm.ActivityInfo.ScreenOrientation}.
+     *
+     * @see WindowManagerService#updateOrientationFromAppTokensLocked(boolean, int)
+     */
+    private int mExtLastOrientation = SCREEN_ORIENTATION_UNSPECIFIED;
+
+    /**
+     * Last applied orientation of the Second external display.
+     * Constants as per {@link android.content.pm.ActivityInfo.ScreenOrientation}.
+     *
+     * @see WindowManagerService#updateOrientationFromAppTokensLocked(boolean, int)
+     */
+    private int mSecondExtLastOrientation = SCREEN_ORIENTATION_UNSPECIFIED;
 
     /**
      * Flag indicating that the application is receiving an orientation that has different metrics
@@ -441,6 +481,8 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
 
     private final ToBooleanFunction<WindowState> mFindFocusedWindow = w -> {
         final AppWindowToken focusedApp = mService.mFocusedApp;
+        final AppWindowToken focusedAppOnExternal = mService.mFocusedAppOnExternal;
+        final AppWindowToken focusedAppOnSecondExternal = mService.mFocusedAppOnSecondExternal;
         if (DEBUG_FOCUS) Slog.v(TAG_WM, "Looking for focus: " + w
                 + ", flags=" + w.mAttrs.flags + ", canReceive=" + w.canReceiveKeys());
 
@@ -464,6 +506,20 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             return true;
         }
 
+        if (focusedAppOnExternal == null) {
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM, "findFocusedWindow: focusedAppOnExternal=null"
+                    + " using new focus @ " + w);
+            mTmpWindow = w;
+            return true;
+        }
+
+        if (focusedAppOnSecondExternal == null) {
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM, "findFocusedWindow: focusedAppOnSecondExternal=null"
+               + " using new focus @ " + w);
+            mTmpWindow = w;
+            return true;
+        }
+
         if (!focusedApp.windowsAreFocusable()) {
             // Current focused app windows aren't focusable...
             if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM, "findFocusedWindow: focusedApp windows not"
@@ -472,13 +528,42 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             return true;
         }
 
+        if (!focusedAppOnExternal.windowsAreFocusable()) {
+            // Current focused app windows aren't focusable...
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM, "findFocusedWindow: focusedAppOnExternal windows not"
+                    + " focusable using new focus @ " + w);
+            mTmpWindow = w;
+            return true;
+        }
+        if (!focusedAppOnSecondExternal.windowsAreFocusable()) {
+            // Current focused app windows aren't focusable...
+            if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM, "findFocusedWindow: focusedAppOnExternal windows not"
+                    + " focusable using new focus @ " + w);
+            mTmpWindow = w;
+            return true;
+        }
+
         // Descend through all of the app tokens and find the first that either matches
         // win.mAppToken (return win) or mFocusedApp (return null).
         if (wtoken != null && w.mAttrs.type != TYPE_APPLICATION_STARTING) {
-            if (focusedApp.compareTo(wtoken) > 0) {
+            if (focusedApp.compareTo(wtoken) > 0  && this.getDisplayId() == Display.DEFAULT_DISPLAY) {
                 // App stack below focused app stack. No focus for you!!!
                 if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM,
                         "findFocusedWindow: Reached focused app=" + focusedApp);
+                mTmpWindow = null;
+                return true;
+            }
+            if (focusedAppOnExternal.compareTo(wtoken) > 0  && this.getDisplayId() == Display.EXTERNAL_DISPLAY) {
+                // App stack below focused app stack. No focus for you!!!
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM,
+                            "findFocusedWindow: Reached focused app=" + focusedAppOnExternal);
+                mTmpWindow = null;
+                return true;
+            }
+            if (focusedAppOnSecondExternal.compareTo(wtoken) > 0  && this.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+                // App stack below focused app stack. No focus for you!!!
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG_WM,
+                            "findFocusedWindow: Reached focused app=" + focusedAppOnSecondExternal);
                 mTmpWindow = null;
                 return true;
             }
@@ -605,7 +690,9 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
                 mTmpApplySurfaceChangesTransactionState.obscured;
         final RootWindowContainer root = mService.mRoot;
         // Only used if default window
-        final boolean someoneLosingFocus = !mService.mLosingFocus.isEmpty();
+        final boolean someoneLosingFocus = (!mService.mLosingFocus.isEmpty() ||
+                                            !mService.mLosingFocusOnExternal.isEmpty() ||
+                                            !mService.mLosingFocusOnSecondExternal.isEmpty());
 
         // Update effect.
         w.mObscured = mTmpApplySurfaceChangesTransactionState.obscured;
@@ -639,6 +726,11 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
                         && w.mAttrs.preferredDisplayModeId != 0) {
                     mTmpApplySurfaceChangesTransactionState.preferredModeId
                             = w.mAttrs.preferredDisplayModeId;
+                }
+
+                 // If there are some windowstate in Second displays,We should set mDisplayHasContent
+                if (w.getDisplayId() != Display.DEFAULT_DISPLAY && w.mToken != null) {
+                    mTmpApplySurfaceChangesTransactionState.displayHasContent = true;
                 }
             }
         }
@@ -714,11 +806,16 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             }
         }
 
-        if (isDefaultDisplay && someoneLosingFocus && w == mService.mCurrentFocus
-                && w.isDisplayedLw()) {
-            mTmpApplySurfaceChangesTransactionState.focusDisplayed = true;
+        // If there are some windowstate in Second displays,We shoule set  mInnerFields.mDisplayHasContent
+        if (w.getDisplayId() != Display.DEFAULT_DISPLAY && w.mToken != null) {
+            mTmpApplySurfaceChangesTransactionState.displayHasContent = true;
         }
 
+        if ((isDefaultDisplay && someoneLosingFocus && (w == mService.mCurrentFocus)
+                && w.isDisplayedLw()) || ((w == mService.mCurrentFocusOnExternal) && w.isDisplayedLw())
+              || ((w == mService.mCurrentFocusOnSecondExternal) && w.isDisplayedLw())) {
+            mTmpApplySurfaceChangesTransactionState.focusDisplayed = true;
+        }
         w.updateResizingWindowIfNeeded();
     };
 
@@ -921,7 +1018,6 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             if (DEBUG_ORIENTATION) Slog.v(TAG_WM, "Deferring rotation, rotation is paused.");
             return false;
         }
-
         ScreenRotationAnimation screenRotationAnimation =
                 mService.mAnimator.getScreenRotationAnimationLocked(mDisplayId);
         if (screenRotationAnimation != null && screenRotationAnimation.isAnimating()) {
@@ -944,6 +1040,65 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             // No point choosing a rotation if the display is not enabled.
             if (DEBUG_ORIENTATION) Slog.v(TAG_WM, "Deferring rotation, display is not enabled.");
             return false;
+        }
+        mService.mRotationOnMain = Settings.System.getString(mService.mContext.getContentResolver(),
+                Settings.System.DISPLAY_ROTATION_ON_MAIN);
+        if(mService.mRotationOnMain == null)
+            mService.mRotationOnMain = "landscape";
+
+        if(mService.mRotationOnMain.equals("portrait")) {
+            mService.mForcePortrait = true;
+            mService.mForceLandScape = false;
+            mService.mForceSeascape = false ;
+            mService.mForceUpsideDown = false;
+        } else if (mService.mRotationOnMain.equals("landscape")) {
+            mService.mForceLandScape = true;
+            mService.mForcePortrait = false;
+            mService.mForceSeascape = false ;
+            mService.mForceUpsideDown = false;
+        }  else if (mService.mRotationOnMain.equals("seascape")){
+            mService.mForceSeascape = true;
+            mService.mForceUpsideDown = false;
+            mService.mForceLandScape = false;
+            mService.mForcePortrait = false;
+        } else if (mService.mRotationOnMain.equals("upsidedown")){
+            mService.mForceUpsideDown = true;
+            mService.mForceLandScape = false;
+            mService.mForcePortrait = false;
+            mService.mForceSeascape = false ;
+        } else {
+            mService.mForceLandScape = false;
+            mService.mForcePortrait = false;
+            mService.mForceSeascape = false;
+            mService.mForceUpsideDown = false;
+        }
+        if (mService.mForceLandScape && mLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        }
+        if (mService.mForcePortrait && mLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        }
+        if (mService.mForceSeascape && mLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+        }
+        if (mService.mForceUpsideDown && mLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+        }
+
+        if(mService.mForceLandScape && mLastOrientation == ActivityInfo.SCREEN_ORIENTATION_USER)
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        else if(mService.mForcePortrait && mLastOrientation ==ActivityInfo.SCREEN_ORIENTATION_USER)
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        else if(mService.mForceSeascape && mLastOrientation == ActivityInfo.SCREEN_ORIENTATION_USER)
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+        else if(mService.mForceUpsideDown && mLastOrientation == ActivityInfo.SCREEN_ORIENTATION_USER)
+            mLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+        else {
+
         }
 
         final int oldRotation = mRotation;
@@ -1005,6 +1160,7 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
         mRotation = rotation;
         mAltOrientation = altOrientation;
         if (isDefaultDisplay) {
+            Slog.w (TAG, "mRotation = " +mRotation);
             mService.mPolicy.setRotationLw(rotation);
         }
 
@@ -1299,6 +1455,165 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
         config.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_NO;
         config.navigationHidden = Configuration.NAVIGATIONHIDDEN_NO;
         mService.mPolicy.adjustConfigurationLw(config, keyboardPresence, navigationPresence);
+    }
+
+    boolean computeExternalScreenConfiguration() {
+
+        DisplayContent displayContent = mService.mRoot.getDisplayContent(Display.EXTERNAL_DISPLAY);
+
+        if(displayContent == null)
+           return false;
+        int req = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        if (mService.mFocusedAppOnExternal != null){
+           req = mService.mFocusedAppOnExternal.mOrientation;
+        }
+        if (DEBUG_ORIENTATION) Slog.v(TAG,"App request on External display  = " + req);
+        if (mService.mForceLandscapeOnExternal && mExtLastOrientation ==
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        }
+        if (mService.mForcePortraitOnExternal && mExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        }
+        if (mService.mForceSeascapeOnExternal && mExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+        }
+        if (mService.mForceUpsideDownOnExternal && mExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+        }
+
+        final int oldRotation = mExtRotation;
+        final int lastOrientation = mExtLastOrientation;
+        int rotation = mService.mPolicy.rotationForOrientationLw(lastOrientation, oldRotation);
+        Slog.w (TAG, "rotation = " +rotation);
+        int realdw = 0;
+        int realdh = 0;
+
+        if ((rotation == Surface.ROTATION_0) ||
+            (rotation == Surface.ROTATION_180)) {
+            realdw = displayContent.mBaseDisplayWidth;
+            realdh = displayContent.mBaseDisplayHeight;
+        } else if ((rotation == Surface.ROTATION_90) ||
+                   (rotation == Surface.ROTATION_270)) {
+            realdw = displayContent.mBaseDisplayHeight;
+            realdh = displayContent.mBaseDisplayWidth;
+        }
+
+        int dw = realdw;
+        int dh = realdh;
+        if (DEBUG_ORIENTATION) Slog.v(TAG,"dw = " + dw + " dh = " + dh);
+        // Update application display metrics.
+        final int appWidth = dw;
+        // FIX ME, We should config the herght on external display
+        // final int appHeight = dh - 40;
+        final int appHeight = dh;
+        final DisplayInfo displayInfo = displayContent.getDisplayInfo();
+        //displayInfo.rotation = isRotated ? 3:0;
+        displayInfo.rotation = rotation;
+        mExtRotation = rotation;
+        displayInfo.logicalWidth = dw;
+        displayInfo.logicalHeight = dh;
+        displayInfo.logicalDensityDpi = displayContent.mBaseDisplayDensity;
+        displayInfo.appWidth = appWidth;
+        displayInfo.appHeight = appHeight;
+        displayInfo.getAppMetrics(mExternalDisplayMetrics);
+        displayInfo.logicalDensityDpi = displayContent.mBaseDisplayDensity;
+        mService.mDisplayManagerInternal.setExternalDisplayInfoOverrideFromWindowManager(
+                displayContent.getDisplayId(), displayInfo);
+
+        mService.mDisplayManagerInternal.performTraversalInTransactionFromWindowManager();
+
+        forAllWindows(w -> {
+            w.mOrientationChanging = true;
+            w.mLastFreezeDuration = 0;
+        }, true /* traverseTopToBottom */);
+        displayContent.mLayoutNeeded = true;
+
+        synchronized(mService.mWindowMap) {
+            mService.mWindowPlacerLocked.performSurfacePlacement();
+        }
+    return true;
+    }
+
+    public boolean computeSecondExternalScreenConfiguration() {
+        Slog.d(TAG, "computeSecondExternalScreenConfiguration: ");
+        DisplayContent displayContent = mService.mRoot.getDisplayContent(Display.SECOND_EXTERNAL_DISPLAY);
+        if(displayContent == null)
+            return false;
+        int req = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+
+        if (mService.mFocusedAppOnSecondExternal != null) {
+            req = mService.mFocusedAppOnSecondExternal.mOrientation;
+        }
+        if (DEBUG_ORIENTATION) Slog.v(TAG,"App request on Second External display " + req);
+
+        if (mService.mForceLandscapeOnSecondExternal && mSecondExtLastOrientation ==
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mSecondExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        }
+        if (mService.mForcePortraitOnSecondExternal && mSecondExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mSecondExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        }
+        if (mService.mForceSeascapeOnSecondExternal && mSecondExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mSecondExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+        }
+        if (mService.mForceUpsideDownOnExternal && mSecondExtLastOrientation ==
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            mSecondExtLastOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+        }
+
+        final int oldRotation = mSecondExtRotation;
+        final int lastOrientation = mSecondExtLastOrientation;
+        int rotation = mService.mPolicy.rotationForOrientationLw(lastOrientation, oldRotation);
+        Slog.v(TAG, "rotation = " +rotation);
+
+        int realdw = 0;
+        int realdh = 0;
+
+        if (rotation == 0 || rotation == 2) {
+            realdw = displayContent.mBaseDisplayWidth;
+            realdh = displayContent.mBaseDisplayHeight;
+        } else if (rotation == 1 || rotation == 3) {
+              realdw = displayContent.mBaseDisplayHeight;
+              realdh = displayContent.mBaseDisplayWidth;
+        }
+        int dw = realdw;
+        int dh = realdh;
+        if (DEBUG_ORIENTATION) Slog.v(TAG,"dw = " + dw + " dh = " + dh);
+        // Update application display metrics.
+        final int appWidth = dw;
+        // FIX ME, We should config the herght on external display
+        // final int appHeight = dh - 40;
+        final int appHeight = dh;
+        final DisplayInfo displayInfo = displayContent.getDisplayInfo();
+        displayInfo.rotation = rotation;
+        mSecondExtRotation = rotation;
+        displayInfo.logicalWidth = dw;
+        displayInfo.logicalHeight = dh;
+        displayInfo.logicalDensityDpi = displayContent.mBaseDisplayDensity;
+        displayInfo.appWidth = appWidth;
+        displayInfo.appHeight = appHeight;
+        displayInfo.getAppMetrics(mExternalDisplayMetrics);
+        displayInfo.logicalDensityDpi = displayContent.mBaseDisplayDensity;
+        mService.mDisplayManagerInternal.setSecondExternalDisplayInfoOverrideFromWindowManager(
+                  displayContent.getDisplayId(), displayInfo);
+        mService.mDisplayManagerInternal.performTraversalInTransactionFromWindowManager();
+
+        forAllWindows(w -> {
+             w.mOrientationChanging = true;
+             w.mLastFreezeDuration = 0;
+        }, true /* traverseTopToBottom */);
+        displayContent.mLayoutNeeded = true;
+
+             synchronized(mService.mWindowMap) {
+                 mService.mWindowPlacerLocked.performSurfacePlacement();
+             }
+        return true;
     }
 
     private int computeCompatSmallestWidth(boolean rotated, int uiMode, int dw, int dh,
@@ -1858,7 +2173,7 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             win.getTouchableRegion(mTmpRegion);
             mTouchExcludeRegion.op(mTmpRegion, Region.Op.UNION);
         }
-        // TODO(multi-display): Support docked stacks on secondary displays.
+        // TODO(multi-display): Support docked stacks on Second displays.
         if (mDisplayId == DEFAULT_DISPLAY && getDockedStackLocked() != null) {
             mDividerControllerLocked.getTouchRegion(mTmpRect);
             mTmpRegion.set(mTmpRect);
@@ -2775,6 +3090,49 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
                 if (DEBUG_LAYOUT_REPEATS) surfacePlacer.debugLayoutRepeats(
                         "after finishPostLayoutPolicyLw", pendingLayoutChanges);
             }
+
+            if (getDisplayId() == Display.EXTERNAL_DISPLAY) {
+                forAllWindows((w) -> {
+                    WindowState backView = null;
+                    boolean hideBackView = false;
+                    if (w.mAttrs.type != WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_EX && w.mHasSurface 
+                            && w.getDisplayId()!= Display.DEFAULT_DISPLAY) {
+                    }
+                    if (w.mAttrs.type == WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_EX) {
+                        backView = w;
+                    }
+                    if (hideBackView && (backView != null)) {
+                        backView.mWinAnimator.hide("hide backview");
+                    } else if (!hideBackView && (backView != null)) {
+                        backView.mWinAnimator.showSurfaceRobustlyLocked();
+                    }
+                }, false /* traverseTopToBottom */);
+            } else if (getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+                forAllWindows((w) -> {
+                    WindowState secondBackView = null;
+                    boolean hideSecondBackView = false;
+                    if ((w.mAttrs.type !=
+                        WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_SECOND_EX) &&
+                        (w.mHasSurface) && (w.getDisplayId()!= Display.DEFAULT_DISPLAY)) {
+                        if (mService.mFocusDisplayId == Display.DEFAULT_DISPLAY ||
+                                mService.mFocusDisplayId == Display.EXTERNAL_DISPLAY) {
+                                hideSecondBackView = true;
+                        }
+                    }
+                    if (w.mAttrs.type == WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_SECOND_EX) {
+                        if (mService.mFocusDisplayId == Display.DEFAULT_DISPLAY ||
+                            mService.mFocusDisplayId == Display.EXTERNAL_DISPLAY) {
+                            hideSecondBackView = true;
+                        }
+                        secondBackView = w;
+                    }
+                    if (hideSecondBackView && (secondBackView != null)) {
+                        secondBackView.mWinAnimator.hide("hide backview");
+                    } else if (!hideSecondBackView && (secondBackView != null)) {
+                        secondBackView.mWinAnimator.showSurfaceRobustlyLocked();
+                    }
+                }, false /* traverseTopToBottom */);
+            }
         } while (pendingLayoutChanges != 0);
 
         mTmpApplySurfaceChangesTransactionState.reset();
@@ -2821,8 +3179,13 @@ class DisplayContent extends WindowContainer<DisplayContent.DisplayChildWindowCo
             Slog.v(TAG, "performLayout: needed=" + isLayoutNeeded() + " dw=" + dw + " dh=" + dh);
         }
 
-        mService.mPolicy.beginLayoutLw(isDefaultDisplay, dw, dh, mRotation,
-                getConfiguration().uiMode);
+        if(isDefaultDisplay)
+            mService.mPolicy.beginLayoutLw(isDefaultDisplay, dw, dh, mRotation,
+                     getConfiguration().uiMode);
+        else
+            mService.mPolicy.beginLayoutLw(isDefaultDisplay,dw, dh, mDisplayInfo.rotation,
+                     getConfiguration().uiMode);
+
         if (isDefaultDisplay) {
             // Not needed on non-default displays.
             mService.mSystemDecorLayer = mService.mPolicy.getSystemDecorLayerLw();

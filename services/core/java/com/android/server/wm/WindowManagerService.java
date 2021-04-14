@@ -121,6 +121,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -236,6 +237,9 @@ import com.android.server.UiThread;
 import com.android.server.Watchdog;
 import com.android.server.input.InputManagerService;
 import com.android.server.power.BatterySaverPolicy.ServiceType;
+import com.android.server.wm.WindowManagerService.ExternalDisplayRotationObserver;
+import com.android.server.wm.WindowManagerService.H;
+import com.android.server.wm.WindowManagerService.MainDisplayRotationObserver;
 import com.android.server.power.ShutdownThread;
 
 import java.io.BufferedWriter;
@@ -355,6 +359,27 @@ public class WindowManagerService extends IWindowManager.Stub
     private static final int WINDOW_ANIMATION_SCALE = 0;
     private static final int TRANSITION_ANIMATION_SCALE = 1;
     private static final int ANIMATION_DURATION_SCALE = 2;
+
+    public String mRotationOnExternal;
+    public String mRotationOnSecondExternal;
+    public String mRotationOnMain;
+    public boolean mForceHdmiPortait = false;
+    public boolean mForceLandScape;
+    public boolean mForcePortrait;
+    public boolean mForceSeascape;
+    public boolean mForceUpsideDown;
+    public boolean mForcePortraitOnExternal;
+    public boolean mForceLandscapeOnExternal;
+    public boolean mForceSeascapeOnExternal;
+    public boolean mForceUpsideDownOnExternal;
+    public boolean mForcePortraitOnSecondExternal;
+    public boolean mForceLandscapeOnSecondExternal;
+    public boolean mForceSeascapeOnSecondExternal;
+    public boolean mForceUpsideDownOnSecondExternal;
+    ExternalDisplayRotationObserver mRotationExternalObserver;
+    MainDisplayRotationObserver mRotationMainObserver;
+    SecondExternalDisplayRotationObserver mRotationSecondExternalObserver;
+    public int mFocusDisplayId = 0;
 
     final private KeyguardDisableHandler mKeyguardDisableHandler;
     boolean mKeyguardGoingAway;
@@ -482,6 +507,10 @@ public class WindowManagerService extends IWindowManager.Stub
      * focus window to be displayed before they are told about this.
      */
     ArrayList<WindowState> mLosingFocus = new ArrayList<>();
+
+    ArrayList<WindowState> mLosingFocusOnExternal = new ArrayList<>();
+
+    ArrayList<WindowState> mLosingFocusOnSecondExternal = new ArrayList<>();
 
     /**
      * This is set when we have run out of memory, and will either be an empty
@@ -630,6 +659,12 @@ public class WindowManagerService extends IWindowManager.Stub
 
     WindowState mCurrentFocus = null;
     WindowState mLastFocus = null;
+    WindowState mCurrentFocusOnExternal = null;
+    WindowState mLastFocusOnExternal = null;
+    WindowState mCurrentFocusOnSecondExternal = null;
+    WindowState mLastFocusOnSecondExternal = null;
+
+    int mForcedAppOnExternalOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
 
     /** Windows added since {@link #mCurrentFocus} was set to null. Used for ANR blaming. */
     private final ArrayList<WindowState> mWinAddedSinceNullFocus = new ArrayList<>();
@@ -709,6 +744,8 @@ public class WindowManagerService extends IWindowManager.Stub
 
     // TODO: Move to RootWindowContainer
     AppWindowToken mFocusedApp = null;
+    AppWindowToken mFocusedAppOnExternal = null;
+    AppWindowToken mFocusedAppOnSecondExternal = null;
 
     PowerManager mPowerManager;
     PowerManagerInternal mPowerManagerInternal;
@@ -1022,6 +1059,142 @@ public class WindowManagerService extends IWindowManager.Stub
         }, 0);
     }
 
+    class ExternalDisplayRotationObserver extends ContentObserver {
+        ExternalDisplayRotationObserver(Handler handler) {
+            super(handler);
+        }
+
+        void observe() {
+            // Observe all users' changes
+            ContentResolver resolver = mContext.getContentResolver();
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.DISPLAY_ROTATION_ON_EXTERNAL), false, this,
+                    UserHandle.USER_ALL);
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            Slog.w (TAG, "On Change for External Display Rotation");
+            updateSettings();
+        }
+   }
+
+   private void updateSettings(){
+         mRotationOnExternal = Settings.System.getString(mContext.getContentResolver(),
+              Settings.System.DISPLAY_ROTATION_ON_EXTERNAL);
+         Slog.w (TAG, "mRotationOnExternal = " +mRotationOnExternal);
+         if (mRotationOnExternal.equals("landscape")) {
+             mForceLandscapeOnExternal = true;
+             mForcePortraitOnExternal = false;
+             mForceSeascapeOnExternal = false;
+             mForceUpsideDownOnExternal = false;
+         } else if (mRotationOnExternal.equals("portrait")) {
+             mForceLandscapeOnExternal = false;
+             mForcePortraitOnExternal = true;
+             mForceSeascapeOnExternal = false;
+             mForceUpsideDownOnExternal = false;
+	 } else if (mRotationOnExternal.equals("seascape")) {
+             mForceLandscapeOnExternal = false;
+             mForcePortraitOnExternal = false;
+             mForceSeascapeOnExternal = true;
+             mForceUpsideDownOnExternal = false;
+         } else if (mRotationOnExternal.equals("upsidedown")) {
+             mForceLandscapeOnExternal = false;
+             mForcePortraitOnExternal = false;
+             mForceSeascapeOnExternal = false;
+             mForceUpsideDownOnExternal = true;
+         } else {
+             mForceLandscapeOnExternal = false;
+             mForcePortraitOnExternal = false;
+             mForceSeascapeOnExternal = false;
+             mForceUpsideDownOnExternal = false;
+         }
+         //mForcePortraitOnExternal = mRotationOnExternal.equals("portrait");
+         final DisplayContent displayContent = mRoot.getDisplayContent(Display.EXTERNAL_DISPLAY);
+         displayContent.computeExternalScreenConfiguration();
+   }
+
+   class MainDisplayRotationObserver extends ContentObserver {
+           MainDisplayRotationObserver(Handler handler) {
+           super(handler);
+        }
+
+         void observe() {
+           // Observe all users' changes
+           ContentResolver resolver = mContext.getContentResolver();
+           resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.DISPLAY_ROTATION_ON_MAIN), false, this,
+                    UserHandle.USER_ALL);
+          }
+
+          @Override
+          public void onChange(boolean selfChange) {
+             if (mForceLandScape == false && mForcePortrait == false) {
+                 updateRotation(false,false);
+             } else {
+                 synchronized(mWindowMap) {
+                    reconfigureDisplayLocked(getDefaultDisplayContentLocked());
+                  }
+             }
+        }
+    }
+
+    class SecondExternalDisplayRotationObserver extends ContentObserver {
+        SecondExternalDisplayRotationObserver(Handler handler) {
+               super(handler);
+        }
+        void observe() {
+            // Observe all users' changes
+            ContentResolver resolver = mContext.getContentResolver();
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.DISPLAY_ROTATION_ON_SECOND_EXTERNAL), false, this,
+                    UserHandle.USER_ALL);
+       }
+
+        @Override public void onChange(boolean selfChange) {
+            updateSecondDisplaySettings();
+       }
+
+        private void updateSecondDisplaySettings() {
+            mRotationOnSecondExternal = Settings.System.getString(mContext.getContentResolver(),
+                  Settings.System.DISPLAY_ROTATION_ON_SECOND_EXTERNAL);
+            Slog.w (TAG, "mRotationOnSecondExternal = " +mRotationOnSecondExternal);
+            if (mRotationOnSecondExternal != null) {
+                if (mRotationOnSecondExternal.equals("landscape")) {
+                    mForceLandscapeOnSecondExternal = true;
+                    mForcePortraitOnSecondExternal = false;
+                    mForceSeascapeOnSecondExternal = false;
+                    mForceUpsideDownOnSecondExternal = false;
+                } else if (mRotationOnSecondExternal.equals("portrait")) {
+                    mForceLandscapeOnSecondExternal = false;
+                    mForcePortraitOnSecondExternal = true;
+                    mForceSeascapeOnSecondExternal = false;
+                    mForceUpsideDownOnSecondExternal = false;
+                } else if (mRotationOnSecondExternal.equals("seascape")) {
+                    mForceLandscapeOnSecondExternal = false;
+                    mForcePortraitOnSecondExternal = false;
+                    mForceSeascapeOnSecondExternal = true;
+                    mForceUpsideDownOnSecondExternal = false;
+                } else if (mRotationOnSecondExternal.equals("upsidedown")) {
+                    mForceLandscapeOnSecondExternal = false;
+                    mForcePortraitOnSecondExternal = false;
+                    mForceSeascapeOnSecondExternal = false;
+                    mForceUpsideDownOnSecondExternal = true;
+                } else {
+                    mForceLandscapeOnSecondExternal = false;
+                    mForcePortraitOnSecondExternal = false;
+                    mForceSeascapeOnSecondExternal = false;
+                    mForceUpsideDownOnSecondExternal = false;
+                }
+                final DisplayContent displayContent =
+                        mRoot.getDisplayContent(Display.SECOND_EXTERNAL_DISPLAY);
+                if (displayContent != null) {
+                    displayContent.computeSecondExternalScreenConfiguration();
+                }
+            }
+        }
+    }
+
     private WindowManagerService(Context context, InputManagerService inputManager,
             boolean haveInputMethods, boolean showBootMsgs, boolean onlyCore,
             WindowManagerPolicy policy) {
@@ -1063,6 +1236,10 @@ public class WindowManagerService extends IWindowManager.Stub
         }
 
         mFxSession = new SurfaceSession();
+
+        mForceLandScape = true;
+        mForcePortrait = true;
+
         mDisplayManager = (DisplayManager)context.getSystemService(Context.DISPLAY_SERVICE);
         mDisplays = mDisplayManager.getDisplays();
         for (Display display : mDisplays) {
@@ -1565,7 +1742,14 @@ public class WindowManagerService extends IWindowManager.Stub
             displayContent.assignWindowLayers(false /* setLayoutNeeded */);
 
             if (focusChanged) {
-                mInputMonitor.setInputFocusLw(mCurrentFocus, false /*updateInputWindows*/);
+                if (win.getDisplayId() == Display.DEFAULT_DISPLAY) {
+                    mInputMonitor.setInputFocusLw(mCurrentFocus, false /*updateInputWindows*/);
+                } else if(win.getDisplayId() == Display.EXTERNAL_DISPLAY) {
+                    mInputMonitor.setInputFocusOnExternalLw(mCurrentFocus, false /*updateInputWindows*/);
+                } else if(win.getDisplayId() == Display.SECOND_EXTERNAL_DISPLAY) {
+                    mInputMonitor.setInputFocusOnSecondExternalLw(mCurrentFocus, false);
+                }
+
             }
             mInputMonitor.updateInputWindowsLw(false /*force*/);
 
@@ -2580,7 +2764,7 @@ public class WindowManagerService extends IWindowManager.Stub
                 dc.setLastOrientation(req);
                 //send a message to Policy indicating orientation change to take
                 //action like disabling/enabling sensors etc.,
-                // TODO(multi-display): Implement policy for secondary displays.
+                // TODO(multi-display): Implement policy for Second displays.
                 if (dc.isDefaultDisplay) {
                     mPolicy.setCurrentOrientationLw(req);
                 }
@@ -2675,6 +2859,79 @@ public class WindowManagerService extends IWindowManager.Stub
                 setFocusTaskRegionLocked(prev);
             }
 
+            if (moveFocusNow && changed) {
+                final long origId = Binder.clearCallingIdentity();
+                updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
+                Binder.restoreCallingIdentity(origId);
+            }
+        }
+    }
+
+    @Override
+    public void setFocusedAppOnExternal(IBinder token, boolean moveFocusNow) {
+        if (!checkCallingPermission(android.Manifest.permission.MANAGE_APP_TOKENS,
+                "setFocusedApp()")) {
+            throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
+        }
+        Slog.d(TAG, "setFocusedAppOnExternal: " + token);
+        Slog.d(TAG, "setFocusedAppOnExternal: " + moveFocusNow);
+        synchronized(mWindowMap) {
+            final AppWindowToken newFocus;
+            if (token == null) {
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Clearing external focused app, was " + mFocusedAppOnExternal);
+                newFocus = null;
+            } else {
+                newFocus = mRoot.getAppWindowToken(token);
+                if (newFocus == null) {
+                    Slog.w(TAG, "Attempted to set external focus to non-existing app token: " + token);
+                }
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Set external focused app to: " + newFocus
+                        + " old external focus=" + mFocusedAppOnExternal + " moveFocusNow=" + moveFocusNow);
+            }
+
+            final boolean changed = mFocusedAppOnExternal != newFocus;
+            if (changed) {
+                AppWindowToken prev = mFocusedAppOnExternal;
+                mFocusedAppOnExternal = newFocus;
+                mInputMonitor.setFocusedAppOnExternalLw(newFocus);
+                setFocusTaskRegionLocked(prev);
+            }
+
+            if (moveFocusNow && changed) {
+                final long origId = Binder.clearCallingIdentity();
+                updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
+                Binder.restoreCallingIdentity(origId);
+            }
+        }
+    }
+
+    @Override
+    public void setFocusedAppOnSecondExternal(IBinder token, boolean moveFocusNow) {
+        if (!checkCallingPermission(android.Manifest.permission.MANAGE_APP_TOKENS,
+                    "setFocusedApp()")) {
+            throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
+        }
+        synchronized(mWindowMap) {
+            final AppWindowToken newFocus;
+            if (token == null) {
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Clearing external focused app, was " + mFocusedAppOnSecondExternal);
+                newFocus = null;
+            } else {
+                newFocus = mRoot.getAppWindowToken(token);
+                if (newFocus == null) {
+                    Slog.w(TAG, "Attempted to set external focus to non-existing app token: " + token);
+                }
+                if (DEBUG_FOCUS_LIGHT) Slog.v(TAG, "Set external focused app to: " + newFocus
+                          + " old external focus=" + mFocusedAppOnSecondExternal + " moveFocusNow=" + moveFocusNow);
+            }
+
+            final boolean changed = mFocusedAppOnSecondExternal != newFocus;
+            if (changed) {
+                AppWindowToken prev = mFocusedAppOnExternal;
+                mFocusedAppOnSecondExternal = newFocus;
+                mInputMonitor.setFocusedAppOnSecondExternalLw(newFocus);
+                setFocusTaskRegionLocked(prev);
+            }
             if (moveFocusNow && changed) {
                 final long origId = Binder.clearCallingIdentity();
                 updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, true /*updateInputWindows*/);
@@ -4807,6 +5064,10 @@ public class WindowManagerService extends IWindowManager.Stub
         } catch (RemoteException e) {
         }
 
+        mRotationExternalObserver = new ExternalDisplayRotationObserver(mH);
+        mRotationExternalObserver.observe();
+        mRotationSecondExternalObserver = new SecondExternalDisplayRotationObserver(mH);
+        mRotationSecondExternalObserver.observe();
         updateCircularDisplayMaskIfNeeded();
     }
 
@@ -4823,6 +5084,8 @@ public class WindowManagerService extends IWindowManager.Stub
     public void systemReady() {
         mPolicy.systemReady();
         mTaskSnapshotController.systemReady();
+        mRotationMainObserver = new MainDisplayRotationObserver(mH);
+        mRotationMainObserver.observe();
         mHasWideColorGamutSupport = queryWideColorGamutSupport();
     }
 
@@ -4897,6 +5160,7 @@ public class WindowManagerService extends IWindowManager.Stub
         public static final int NOTIFY_KEYGUARD_FLAGS_CHANGED = 56;
         public static final int NOTIFY_KEYGUARD_TRUSTED_CHANGED = 57;
         public static final int SET_HAS_OVERLAY_UI = 58;
+        public static final int UPDATE_NEW_FOCUS_DISPLAY = 59;
 
         /**
          * Used to denote that an integer field in a message will not be used.
@@ -4912,7 +5176,13 @@ public class WindowManagerService extends IWindowManager.Stub
                 case REPORT_FOCUS_CHANGE: {
                     WindowState lastFocus;
                     WindowState newFocus;
-
+                    WindowState lastFocusOnExternal;
+                    WindowState newFocusOnExternal;
+                    WindowState lastFocusOnSecondExternal;
+                    WindowState newFocusOnSecondExternal;
+                    boolean focusChanged = false;
+                    boolean externalFocusChanged = false;
+                    boolean secondExternalFocusChanged = false;
                     AccessibilityController accessibilityController = null;
 
                     synchronized(mWindowMap) {
@@ -4924,18 +5194,47 @@ public class WindowManagerService extends IWindowManager.Stub
 
                         lastFocus = mLastFocus;
                         newFocus = mCurrentFocus;
-                        if (lastFocus == newFocus) {
+                        lastFocusOnExternal = mLastFocusOnExternal;
+                        newFocusOnExternal = mCurrentFocusOnExternal;
+                        lastFocusOnExternal = mLastFocusOnExternal;
+                        newFocusOnSecondExternal = mCurrentFocusOnSecondExternal;
+                        lastFocusOnSecondExternal = mLastFocusOnSecondExternal;
+                        focusChanged = (lastFocus == newFocus ? false : true);
+                        externalFocusChanged = (lastFocusOnExternal == newFocusOnExternal ? false : true);
+                        secondExternalFocusChanged = (lastFocusOnSecondExternal ==
+                                                      newFocusOnSecondExternal ? false : true);
+
+                        if (!focusChanged && !externalFocusChanged) {
                             // Focus is not changing, so nothing to do.
                             return;
                         }
-                        mLastFocus = newFocus;
-                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG_WM, "Focus moving from " + lastFocus +
-                                " to " + newFocus);
-                        if (newFocus != null && lastFocus != null
-                                && !newFocus.isDisplayedLw()) {
-                            //Slog.i(TAG_WM, "Delaying loss of focus...");
-                            mLosingFocus.add(lastFocus);
-                            lastFocus = null;
+                        if (focusChanged) {
+                            mLastFocus = newFocus;
+                            if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "Focus moving from " + lastFocus +
+                                    " to " + newFocus);
+                            if (newFocus != null && lastFocus != null
+                                    && !newFocus.isDisplayedLw()) {
+                                mLosingFocus.add(lastFocus);
+                                lastFocus = null;
+                            }
+                        }
+                        if(externalFocusChanged) {
+                            mLastFocusOnExternal = newFocusOnExternal;
+                            if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "External focus moving from " + lastFocusOnExternal +                                                             " to " + newFocusOnExternal);
+                            if (newFocusOnExternal != null && lastFocusOnExternal != null
+                                    && !newFocusOnExternal.isDisplayedLw()) {
+                                mLosingFocusOnExternal.add(lastFocusOnExternal);
+                                lastFocusOnExternal = null;
+                            }
+                        }
+                        if(secondExternalFocusChanged) {
+                            mLastFocusOnSecondExternal = newFocusOnSecondExternal;
+                            if (newFocusOnSecondExternal != null && lastFocusOnSecondExternal != null
+                                        && !newFocusOnSecondExternal.isDisplayedLw()) {
+                                    //Slog.i(TAG, "Delaying loss of focus...");
+                                mLosingFocusOnSecondExternal.add(lastFocusOnSecondExternal);
+                                lastFocusOnSecondExternal = null;
+                            }
                         }
                     }
 
@@ -4945,36 +5244,35 @@ public class WindowManagerService extends IWindowManager.Stub
                         accessibilityController.onWindowFocusChangedNotLocked();
                     }
 
-                    //System.out.println("Changing focus from " + lastFocus
-                    //                   + " to " + newFocus);
-                    if (newFocus != null) {
+                    if (newFocus != null && focusChanged) {
                         if (DEBUG_FOCUS_LIGHT) Slog.i(TAG_WM, "Gaining focus: " + newFocus);
                         newFocus.reportFocusChangedSerialized(true, mInTouchMode);
                         notifyFocusChanged();
                     }
-
-                    if (lastFocus != null) {
+                    if (lastFocus != null && focusChanged) {
                         if (DEBUG_FOCUS_LIGHT) Slog.i(TAG_WM, "Losing focus: " + lastFocus);
                         lastFocus.reportFocusChangedSerialized(false, mInTouchMode);
                     }
-                } break;
-
-                case REPORT_LOSING_FOCUS: {
-                    ArrayList<WindowState> losers;
-
-                    synchronized(mWindowMap) {
-                        losers = mLosingFocus;
-                        mLosingFocus = new ArrayList<WindowState>();
+                    if (newFocusOnExternal != null && externalFocusChanged) {
+                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "Gaining external focus: " + newFocusOnExternal);
+                        newFocusOnExternal.reportFocusChangedSerialized(true, mInTouchMode);
+                        notifyFocusChanged();
                     }
-
-                    final int N = losers.size();
-                    for (int i=0; i<N; i++) {
-                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG_WM, "Losing delayed focus: " +
-                                losers.get(i));
-                        losers.get(i).reportFocusChangedSerialized(false, mInTouchMode);
+                    if (lastFocusOnExternal != null && externalFocusChanged) {
+                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "Losing external focus: " + lastFocusOnExternal);
+                        lastFocusOnExternal.reportFocusChangedSerialized(false, mInTouchMode);
                     }
-                } break;
-
+                    if (newFocusOnSecondExternal != null && secondExternalFocusChanged) {
+                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "Gaining external focus: " + newFocusOnSecondExternal);
+                        newFocusOnSecondExternal.reportFocusChangedSerialized(true, mInTouchMode);
+                        notifyFocusChanged();
+                    }
+                    if (lastFocusOnSecondExternal != null && secondExternalFocusChanged) {
+                        if (DEBUG_FOCUS_LIGHT) Slog.i(TAG, "Losing external focus: " + lastFocusOnSecondExternal);
+                        lastFocusOnSecondExternal.reportFocusChangedSerialized(false, mInTouchMode);
+                    }
+                    break;
+                }
                 case WINDOW_FREEZE_TIMEOUT: {
                     // TODO(multidisplay): Can non-default displays rotate?
                     synchronized (mWindowMap) {
@@ -5151,7 +5449,7 @@ public class WindowManagerService extends IWindowManager.Stub
                         }
                     }
                 }
-                break;
+                    break;
 
                 case REPORT_HARD_KEYBOARD_STATUS_CHANGE: {
                     notifyHardKeyboardStatusChange();
@@ -5215,7 +5513,7 @@ public class WindowManagerService extends IWindowManager.Stub
                         mActivityManager.notifyActivityDrawn((IBinder) msg.obj);
                     } catch (RemoteException e) {
                     }
-                    break;
+                break;
                 case ALL_WINDOWS_DRAWN: {
                     Runnable callback;
                     synchronized (mWindowMap) {
@@ -5363,6 +5661,11 @@ public class WindowManagerService extends IWindowManager.Stub
                     mAmInternal.setHasOverlayUi(msg.arg1, msg.arg2 == 1);
                 }
                 break;
+                case UPDATE_NEW_FOCUS_DISPLAY:
+                    synchronized (mWindowMap) {
+                        updateFocusDislayLocked(msg.arg1);
+                    }
+                break;
             }
             if (DEBUG_WINDOW_TRACE) {
                 Slog.v(TAG_WM, "handleMessage: exit");
@@ -5384,6 +5687,17 @@ public class WindowManagerService extends IWindowManager.Stub
             wtoken.stopUsingSavedSurfaceLocked();
         }
         mFinishedEarlyAnim.clear();
+    }
+
+    public void updateFocusDislayLocked(int displayId) {
+        mFocusDisplayId = displayId;
+        mWindowPlacerLocked.performSurfacePlacement();
+    }
+
+    public void updateFocusDisplay( int displayId) {
+        if (mFocusDisplayId != displayId) {
+            mH.sendMessage(mH.obtainMessage(H.UPDATE_NEW_FOCUS_DISPLAY, displayId, 0));
+        }
     }
 
     // -------------------------------------------------------------
@@ -5946,7 +6260,15 @@ public class WindowManagerService extends IWindowManager.Stub
     // TODO: Move to DisplayContent
     boolean updateFocusedWindowLocked(int mode, boolean updateInputWindows) {
         WindowState newFocus = mRoot.computeFocusedWindow();
-        if (mCurrentFocus != newFocus) {
+        WindowState newFocusOnExternal = mRoot.computeFocusedWindowOnExternalLocked(); // Need to add this function
+        WindowState newFocusOnSecondExternal = mRoot.computeFocusedWindowOnSecondExternalLocked();
+        //if (mCurrentFocus != newFocus) {
+        if (mCurrentFocus != newFocus || mCurrentFocusOnExternal != newFocusOnExternal || 
+            mCurrentFocusOnSecondExternal != newFocusOnSecondExternal ) {
+
+            boolean mFocusChanged = mCurrentFocus != newFocus;
+            boolean mExternalFocusChanged = mCurrentFocusOnExternal != newFocusOnExternal;
+            boolean mSecondExternalFocusChanged = mCurrentFocusOnSecondExternal != newFocusOnSecondExternal;
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "wmUpdateFocus");
             // This check makes sure that we don't already have the focus
             // change message pending.
@@ -5970,19 +6292,20 @@ public class WindowManagerService extends IWindowManager.Stub
                             prevImeAnimLayer != mInputMethodWindow.mWinAnimator.mAnimLayer;
                 }
             }
-
             if (imWindowChanged) {
                 mWindowsChanged = true;
                 displayContent.setLayoutNeeded();
                 newFocus = mRoot.computeFocusedWindow();
             }
-
             if (DEBUG_FOCUS_LIGHT || localLOGV) Slog.v(TAG_WM, "Changing focus from " +
                     mCurrentFocus + " to " + newFocus + " Callers=" + Debug.getCallers(4));
             final WindowState oldFocus = mCurrentFocus;
             mCurrentFocus = newFocus;
             mLosingFocus.remove(newFocus);
-
+            mCurrentFocusOnExternal = newFocusOnExternal;
+            mLosingFocusOnExternal.remove(newFocusOnExternal);
+            mCurrentFocusOnSecondExternal = newFocusOnSecondExternal;
+            mLosingFocusOnSecondExternal.remove(newFocusOnSecondExternal);
             if (mCurrentFocus != null) {
                 mWinAddedSinceNullFocus.clear();
                 mWinRemovedSinceNullFocus.clear();
@@ -6013,9 +6336,17 @@ public class WindowManagerService extends IWindowManager.Stub
             if (mode != UPDATE_FOCUS_WILL_ASSIGN_LAYERS) {
                 // If we defer assigning layers, then the caller is responsible for
                 // doing this part.
-                mInputMonitor.setInputFocusLw(mCurrentFocus, updateInputWindows);
-            }
+                if (mFocusChanged) {
+                    mInputMonitor.setInputFocusLw(mCurrentFocus, false /*updateInputWindows*/);
+                }
 
+                if (mExternalFocusChanged) {
+                    mInputMonitor.setInputFocusOnExternalLw(mCurrentFocusOnExternal, false /*updateInputWindows*/);
+                }
+                if (mSecondExternalFocusChanged) {
+                    mInputMonitor.setInputFocusOnSecondExternalLw(mCurrentFocusOnSecondExternal, false /*updateInputWindows*/);
+                }
+            }
             displayContent.adjustForImeIfNeeded();
 
             // We may need to schedule some toast windows to be removed. The toasts for an app that
@@ -6237,7 +6568,7 @@ public class WindowManagerService extends IWindowManager.Stub
             if (line != null) {
                 String[] toks = line.split("%");
                 if (toks != null && toks.length > 0) {
-                    // TODO(multi-display): Show watermarks on secondary displays.
+                    // TODO(multi-display): Show watermarks on Second displays.
                     final DisplayContent displayContent = getDefaultDisplayContentLocked();
                     mWatermark = new Watermark(displayContent.getDisplay(),
                             displayContent.mRealDisplayMetrics, mFxSession, toks);

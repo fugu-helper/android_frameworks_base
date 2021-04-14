@@ -39,6 +39,8 @@ import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_MAGNIFICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
+import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_EX;
+import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_SECOND_EX;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL;
 import static android.view.WindowManager.LayoutParams.TYPE_PHONE;
 import static android.view.WindowManager.LayoutParams.TYPE_POINTER;
@@ -181,6 +183,10 @@ public interface WindowManagerPolicy {
      * {@link #interceptKeyBeforeQueueing}.
      */
     public final static int ACTION_PASS_TO_USER = 0x00000001;
+
+    public final static int GET_LANDSCAPE_ROTATION = 0x00000001;
+
+    public final static int GET_PORTRAIL_ROTATION = 0x00000002;
 
     /**
      * Register shortcuts for window manager to dispatch.
@@ -853,6 +859,8 @@ public interface WindowManagerPolicy {
                 // changes the device volume
                 return  canAddInternalSystemWindow ? 22 : 11;
             case TYPE_NAVIGATION_BAR:
+            case TYPE_NAVIGATION_BAR_EX:
+            case TYPE_NAVIGATION_BAR_SECOND_EX:
                 // the navigation bar, if available, shows atop most things
                 return  23;
             case TYPE_NAVIGATION_BAR_PANEL:
@@ -1729,6 +1737,8 @@ public interface WindowManagerPolicy {
     public void onConfigurationChanged();
 
     public boolean shouldRotateSeamlessly(int oldRotation, int newRotation);
+
+    public int getDisplayInitRotation(Display display,int Orientation);
 
     /**
      * Called when System UI has been started.

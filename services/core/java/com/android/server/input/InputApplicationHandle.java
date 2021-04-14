@@ -37,10 +37,14 @@ public final class InputApplicationHandle {
     // Dispatching timeout.
     public long dispatchingTimeoutNanos;
 
+    // Display Id
+    public int displayId;
+
     private native void nativeDispose();
 
     public InputApplicationHandle(Object appWindowToken) {
         this.appWindowToken = appWindowToken;
+        displayId = -1;
     }
 
     @Override

@@ -446,7 +446,7 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
      * Set when the orientation is changing and this window has not yet
      * been updated for the new orientation.
      */
-    private boolean mOrientationChanging;
+    public boolean mOrientationChanging;
 
     /**
      * Sometimes in addition to the mOrientationChanging
